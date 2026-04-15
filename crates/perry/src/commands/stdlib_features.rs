@@ -75,10 +75,15 @@ pub fn module_to_features(module: &str) -> &'static [&'static str] {
         // ── IDs (uuid / nanoid) ───────────────────────────────────────
         "uuid" | "nanoid" => &["ids"],
 
+        // ── OCI Container management ──────────────────────────────────
+        "perry/container" | "perry/compose" => &["container"],
+
         // Slugify is in the always-on stdlib core (no optional dep).
         "slugify" => &[],
         // dotenv has no optional dep.
         "dotenv" | "dotenv/config" => &[],
+
+        "perry/container" | "perry/compose" | "perry/container-compose" | "perry/workloads" => &["container"],
 
         // Modules with no optional perry-stdlib dependency (decimal.js,
         // bignumber.js, lru-cache, commander, exponential-backoff, http,
@@ -95,6 +100,7 @@ pub fn compute_required_features(
     native_module_imports: &BTreeSet<String>,
     uses_fetch: bool,
     uses_crypto_builtins: bool,
+    uses_container: bool,
 ) -> BTreeSet<&'static str> {
     let mut features = BTreeSet::new();
     for module in native_module_imports {
@@ -110,6 +116,9 @@ pub fn compute_required_features(
     // out in the perry-stdlib `crypto` feature.
     if uses_crypto_builtins {
         features.insert("crypto");
+    }
+    if uses_container {
+        features.insert("container");
     }
     features
 }
