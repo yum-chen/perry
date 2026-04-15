@@ -13,3 +13,12 @@ pub use handle::*;
 #[cfg(feature = "async-runtime")]
 pub use async_bridge::*;
 pub use dispatch::*;
+
+#[no_mangle]
+pub extern "C" fn js_stdlib_to_bool(v: f64) -> i32 {
+    if perry_runtime::JSValue::from_bits(v.to_bits()).to_bool() {
+        1
+    } else {
+        0
+    }
+}
