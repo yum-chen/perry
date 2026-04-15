@@ -262,6 +262,8 @@ pub struct CompilationContext {
     /// `CryptoSha256`/`CryptoMd5` which dispatch to runtime symbols that
     /// live behind the perry-stdlib `crypto` feature.
     pub uses_crypto_builtins: bool,
+    /// Whether `perry/container` or `perry/compose` is imported.
+    pub uses_container: bool,
     /// Whether `perry/thread` is imported. When true, the runtime must
     /// keep `panic = "unwind"` so that worker-thread panics translate to
     /// promise rejections via `catch_unwind` in `perry-runtime/src/thread.rs`
@@ -308,6 +310,7 @@ impl CompilationContext {
             native_module_imports: BTreeSet::new(),
             uses_fetch: false,
             uses_crypto_builtins: false,
+            uses_container: false,
             needs_thread: false,
             module_source_hashes: HashMap::new(),
         }
@@ -1781,6 +1784,7 @@ fn build_optimized_libs(
         &ctx.native_module_imports,
         ctx.uses_fetch,
         ctx.uses_crypto_builtins,
+        ctx.uses_container,
     );
     // The UI backends (perry-ui-gtk4 on Linux, perry-ui-macos, perry-ui-windows)
     // reach into perry-stdlib's async bridge from GLib/NSTimer/WM_TIMER
@@ -3111,6 +3115,10 @@ fn collect_modules(
                 // promise rejections via `catch_unwind` — auto-mode keeps
                 // panic = "unwind" when this is set.
                 ctx.needs_thread = true;
+            }
+            if import.source == "perry/container" || import.source == "perry/compose" {
+                ctx.needs_stdlib = true;
+                ctx.uses_container = true;
             }
             if perry_hir::requires_stdlib(&import.source) {
                 ctx.needs_stdlib = true;

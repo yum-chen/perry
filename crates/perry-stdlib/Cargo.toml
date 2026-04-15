@@ -13,7 +13,7 @@ crate-type = ["rlib", "staticlib"]
 default = ["full"]
 
 # Full stdlib - everything included
-full = ["http-server", "http-client", "database", "crypto", "compression", "email", "websocket", "image", "scheduler", "ids", "html-parser", "rate-limit", "validation", "net", "tls"]
+full = ["http-server", "http-client", "database", "crypto", "compression", "email", "websocket", "image", "scheduler", "ids", "html-parser", "rate-limit", "validation", "container"]
 
 # Minimal core - just what's needed for basic programs
 core = []
@@ -27,14 +27,6 @@ http-client = ["dep:reqwest", "async-runtime"]
 
 # WebSocket
 websocket = ["dep:tokio-tungstenite", "dep:futures-util", "async-runtime"]
-
-# Raw TCP sockets (`net.Socket` — Postgres wire driver, custom protocols).
-net = ["async-runtime"]
-
-# TLS — direct `tls.connect()` and `socket.upgradeToTLS()` (Postgres SSLRequest flow).
-# Uses rustls (not native-tls) to avoid OpenSSL on every platform and keep Android
-# cross-compile unblocked; matches reqwest/tokio-tungstenite/mongodb feature flags.
-tls = ["net", "dep:tokio-rustls", "dep:rustls", "dep:rustls-native-certs"]
 
 # Databases
 database = ["database-postgres", "database-mysql", "database-sqlite", "database-redis", "database-mongodb"]
@@ -74,11 +66,15 @@ validation = ["dep:validator", "dep:regex"]
 # UUID/nanoid
 ids = ["dep:uuid", "dep:nanoid"]
 
+# Container module (OCI container management)
+container = ["dep:async-trait", "dep:tokio", "async-runtime", "perry-container-compose", "dep:indexmap", "dep:serde_yaml"]
+
 # Async runtime (tokio) - internal feature
 async-runtime = ["dep:tokio"]
 
 [dependencies]
 perry-runtime = { workspace = true, features = ["stdlib"] }
+perry-container-compose = { path = "../perry-container-compose", optional = true }
 
 thiserror.workspace = true
 anyhow.workspace = true
@@ -96,7 +92,7 @@ rand = "0.8"  # Required by lodash (core module)
 # === OPTIONAL DEPENDENCIES ===
 
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "macros", "io-util"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "macros"], optional = true }
 
 # HTTP Server
 hyper = { version = "1.4", features = ["server", "http1", "http2"], optional = true }
@@ -113,11 +109,6 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls", "http2"], defaul
 # WebSocket
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"], optional = true }
 futures-util = { version = "0.3", optional = true }
-
-# TLS (for net.Socket.upgradeToTLS and tls.connect) — rustls-only, no OpenSSL.
-tokio-rustls = { version = "0.26", optional = true }
-rustls = { version = "0.23", optional = true }
-rustls-native-certs = { version = "0.8", optional = true }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "mysql", "postgres", "chrono"], optional = true }
@@ -170,6 +161,13 @@ regex = { version = "1.10", optional = true }
 # IDs
 uuid = { version = "1.11", features = ["v4", "v1", "v7"], optional = true }
 nanoid = { version = "0.4", optional = true }
+
+indexmap = { version = "2.2", features = ["serde"] }
+
+# Container module
+async-trait = { version = "0.1", optional = true }
+indexmap = { version = "2.2", optional = true }
+serde_yaml = { version = "0.9", optional = true }
 
 # LRU Cache
 lru = "0.12"

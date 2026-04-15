@@ -1,0 +1,64 @@
+package perry:container;
+
+interface container {
+    record container-spec {
+        image: string,
+        name: option<string>,
+        ports: option<list<string>>,
+        volumes: option<list<string>>,
+        env: option<list<tuple<string, string>>>,
+        cmd: option<list<string>>,
+        entrypoint: option<list<string>>,
+        network: option<string>,
+        rm: option<bool>,
+    }
+
+    record container-handle {
+        id: string,
+    }
+
+    record container-info {
+        id: string,
+        name: string,
+        image: string,
+        status: string,
+        ports: list<string>,
+        created: string,
+    }
+
+    record container-logs {
+        stdout: string,
+        stderr: string,
+    }
+
+    record image-info {
+        id: string,
+        repository: string,
+        tag: string,
+        size: u64,
+        created: string,
+    }
+
+    record backend-info {
+        name: string,
+        available: bool,
+        reason: option<string>,
+        version: option<string>,
+    }
+
+    run: func(spec: container-spec) -> result<container-handle, string>;
+    create: func(spec: container-spec) -> result<container-handle, string>;
+    start: func(id: string) -> result<_, string>;
+    stop: func(id: string, timeout: option<u32>) -> result<_, string>;
+    remove: func(id: string, force: bool) -> result<_, string>;
+    list: func(all: bool) -> result<list<container-info>, string>;
+    inspect: func(id: string) -> result<container-info, string>;
+    logs: func(id: string, tail: option<u32>) -> result<container-logs, string>;
+    exec: func(id: string, cmd: list<string>, env: option<list<tuple<string, string>>>, workdir: option<string>) -> result<container-logs, string>;
+    pull-image: func(reference: string) -> result<_, string>;
+    list-images: func() -> result<list<image-info>, string>;
+    remove-image: func(reference: string, force: bool) -> result<_, string>;
+    get-backend: func() -> string;
+    detect-backend: func() -> result<list<backend-info>, string>;
+    compose-up: func(spec-json: string) -> result<u64, string>;
+}
