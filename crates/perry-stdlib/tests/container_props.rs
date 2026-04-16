@@ -215,7 +215,7 @@ proptest! {
     fn prop_depends_on_entry_service_names(
         names in proptest::collection::vec("[a-z][a-z0-9_-]{1,10}", 1..=6),
     ) {
-        use perry_container_compose::types::{DependsOnSpec, ComposeDependsOn};
+        use perry_container_compose::types::{DependsOnSpec, ComposeDependsOn, DependsOnCondition};
 
         // List variant
         let list_entry = DependsOnSpec::List(names.clone());
@@ -227,7 +227,7 @@ proptest! {
             map.insert(
                 name.clone(),
                 ComposeDependsOn {
-                    condition: None,
+                    condition: DependsOnCondition::ServiceStarted,
                     required: None,
                     restart: None,
                 },
@@ -267,7 +267,7 @@ proptest! {
                 reason: "test reason".to_string(),
             },
             3 => perry_stdlib::container::ContainerError::DependencyCycle {
-                cycle: vec![msg.clone()],
+                services: vec![msg.clone()],
             },
             4 => perry_stdlib::container::ContainerError::ServiceStartupFailed {
                 service: msg.clone(),

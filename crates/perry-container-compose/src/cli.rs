@@ -130,7 +130,7 @@ pub async fn run(cli: Cli) -> Result<()> {
 
     let backend_res = crate::backend::detect_backend().await;
     let backend = match backend_res {
-        Ok(b) => std::sync::Arc::new(b) as std::sync::Arc<dyn crate::backend::ContainerBackend>,
+        Ok(b) => std::sync::Arc::from(b),
         Err(probed) => return Err(crate::error::ComposeError::NoBackendFound { probed }),
     };
 
@@ -194,7 +194,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                     .get(&args.service)
                     .ok_or_else(|| crate::error::ComposeError::NotFound(args.service.clone()))?;
                 let container_name =
-                    crate::service::service_container_name(svc, &args.service);
+                    crate::service::generate_name(&svc.image_ref(&args.service), &args.service);
 
                 engine
                     .backend

@@ -1,19 +1,16 @@
-use crate::error::Result;
 use md5::{Digest, Md5};
 
-pub fn service_container_name(service: &crate::types::ComposeService, service_name: &str) -> String {
-    if let Some(name) = service.container_name.as_ref() {
-        return name.clone();
-    }
-
-    let image = service.image.as_deref().unwrap_or("unknown");
+pub fn generate_name(image: &str, service_name: &str) -> String {
+    // MD5 hash of the image name for a stable prefix
     let mut hasher = Md5::new();
     hasher.update(image.as_bytes());
     let hash = hex::encode(hasher.finalize());
     let short_hash = &hash[..8];
 
+    // Random suffix for uniqueness across multiple instances of the same image
     let random_suffix: u32 = rand::random();
 
+    // Sanitize service name: replace non-alphanumeric (except hyphen) with underscore
     let safe_name: String = service_name
         .chars()
         .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
