@@ -56,6 +56,10 @@ impl ComposeWrapper {
     pub async fn restart(&self, services: &[String]) -> Result<(), ContainerError> {
         self.engine.restart(services).await.map_err(Into::into)
     }
+
+    pub fn config(&self) -> Result<String, ContainerError> {
+        self.engine.config().map_err(Into::into)
+    }
 }
 
 /// Create a new compose stack from a spec and backend, bring it up, and return the handle.

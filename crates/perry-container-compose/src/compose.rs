@@ -3,7 +3,7 @@
 //! Provides `ComposeEngine::up()`, `down()`, `ps()`, `logs()`, `exec()`, etc.
 //! Uses Kahn's algorithm for dependency resolution.
 
-use crate::backend::ContainerBackend;
+use crate::backend::{ContainerBackend, NetworkConfig, VolumeConfig};
 pub use crate::types::ContainerLogs;
 use crate::error::{ComposeError, Result};
 use crate::service;
@@ -11,7 +11,6 @@ use crate::types::{
     ComposeHandle, ComposeSpec, ContainerInfo, ContainerSpec,
 };
 use indexmap::IndexMap;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -27,8 +26,15 @@ pub struct ComposeEngine {
     pub spec: ComposeSpec,
     pub project_name: String,
     pub backend: Arc<dyn ContainerBackend>,
-    /// Services that were started in this session
-    started_containers: std::sync::Mutex<Vec<String>>,
+    /// Resources that were created in this session (name, is_volume)
+    created_resources: std::sync::Mutex<Vec<(String, ResourceType)>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResourceType {
+    Container,
+    Network,
+    Volume,
 }
 
 impl ComposeEngine {
@@ -42,7 +48,7 @@ impl ComposeEngine {
             spec,
             project_name,
             backend,
-            started_containers: std::sync::Mutex::new(Vec::new()),
+            created_resources: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -98,6 +104,8 @@ impl ComposeEngine {
             order.iter().filter(|s| services.contains(s)).collect()
         };
 
+        let mut created: Vec<(String, ResourceType)> = Vec::new();
+
         // 1. Create networks (skip external)
         if let Some(networks) = &self.spec.networks {
             for (net_name, net_config_opt) in networks {
@@ -107,14 +115,27 @@ impl ComposeEngine {
                 }
                 let net_config = net_config_opt.as_ref().cloned().unwrap_or_default();
                 let resolved_name = net_config.name.as_deref().unwrap_or(net_name.as_str());
+
+                // Best effort check for existence? Usually backends return error if exists.
+                // For simplicity, we just try to create.
                 tracing::info!("Creating network '{}'…", resolved_name);
-                self.backend
-                    .create_network(resolved_name, &net_config)
-                    .await
-                    .map_err(|e| ComposeError::ServiceStartupFailed {
-                        service: format!("network/{}", net_name),
-                        message: e.to_string(),
-                    })?;
+                let config = NetworkConfig {
+                    driver: net_config.driver.clone(),
+                    labels: net_config.labels.as_ref().map(|l| l.to_map()).unwrap_or_default(),
+                    internal: net_config.internal.unwrap_or(false),
+                    enable_ipv6: net_config.enable_ipv6.unwrap_or(false),
+                };
+
+                match self.backend.create_network(resolved_name, &config).await {
+                    Ok(_) => created.push((resolved_name.to_string(), ResourceType::Network)),
+                    Err(e) => {
+                        self.rollback(&created).await;
+                        return Err(ComposeError::ServiceStartupFailed {
+                            service: format!("network/{}", net_name),
+                            message: e.to_string(),
+                        });
+                    }
+                }
             }
         }
 
@@ -127,20 +148,27 @@ impl ComposeEngine {
                 }
                 let vol_config = vol_config_opt.as_ref().cloned().unwrap_or_default();
                 let resolved_name = vol_config.name.as_deref().unwrap_or(vol_name.as_str());
+
                 tracing::info!("Creating volume '{}'…", resolved_name);
-                self.backend
-                    .create_volume(resolved_name, &vol_config)
-                    .await
-                    .map_err(|e| ComposeError::ServiceStartupFailed {
-                        service: format!("volume/{}", vol_name),
-                        message: e.to_string(),
-                    })?;
+                let config = VolumeConfig {
+                    driver: vol_config.driver.clone(),
+                    labels: vol_config.labels.as_ref().map(|l| l.to_map()).unwrap_or_default(),
+                };
+
+                match self.backend.create_volume(resolved_name, &config).await {
+                    Ok(_) => created.push((resolved_name.to_string(), ResourceType::Volume)),
+                    Err(e) => {
+                        self.rollback(&created).await;
+                        return Err(ComposeError::ServiceStartupFailed {
+                            service: format!("volume/{}", vol_name),
+                            message: e.to_string(),
+                        });
+                    }
+                }
             }
         }
 
         // 3. Start services in dependency order
-        let mut started: Vec<String> = Vec::new();
-
         for svc_name in target {
             let svc = self
                 .spec
@@ -189,24 +217,38 @@ impl ComposeEngine {
             if let Err(e) = res {
                 // ROLLBACK
                 tracing::error!("Service '{}' failed to start, rolling back...", svc_name);
-                for c_name in started.iter().rev() {
-                    let _ = self.backend.stop(c_name, None).await;
-                    let _ = self.backend.remove(c_name, true).await;
-                }
+                self.rollback(&created).await;
                 return Err(ComposeError::ServiceStartupFailed {
                     service: svc_name.clone(),
                     message: e.to_string(),
                 });
             }
 
-            started.push(container_name.clone());
+            created.push((container_name.clone(), ResourceType::Container));
         }
 
-        // Record started containers
-        self.started_containers.lock().unwrap().extend(started);
+        // Record created resources
+        self.created_resources.lock().unwrap().extend(created);
 
         // Register and return handle
         Ok(self.register())
+    }
+
+    async fn rollback(&self, created: &[(String, ResourceType)]) {
+        for (name, rtype) in created.iter().rev() {
+            match rtype {
+                ResourceType::Container => {
+                    let _ = self.backend.stop(name, None).await;
+                    let _ = self.backend.remove(name, true).await;
+                }
+                ResourceType::Network => {
+                    let _ = self.backend.remove_network(name).await;
+                }
+                ResourceType::Volume => {
+                    let _ = self.backend.remove_volume(name).await;
+                }
+            }
+        }
     }
 
     // ============ down / stop ============
