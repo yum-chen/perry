@@ -66,6 +66,10 @@ pub fn take_container_logs(id: u64) -> Option<ContainerLogs> {
     handle::take_handle(id as Handle)
 }
 
+pub fn register_image_info(info: ImageInfo) -> u64 {
+    handle::register_handle(info) as u64
+}
+
 pub fn register_image_info_list(list: Vec<ImageInfo>) -> u64 {
     handle::register_handle(list) as u64
 }

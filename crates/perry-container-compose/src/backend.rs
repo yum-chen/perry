@@ -61,6 +61,7 @@ pub trait ContainerBackend: Send + Sync {
         workdir: Option<&str>,
     ) -> Result<ContainerLogs>;
     async fn pull_image(&self, reference: &str) -> Result<()>;
+    async fn inspect_image(&self, reference: &str) -> Result<ImageInfo>;
     async fn list_images(&self) -> Result<Vec<ImageInfo>>;
     async fn remove_image(&self, reference: &str, force: bool) -> Result<()>;
     async fn create_network(&self, name: &str, config: &NetworkConfig) -> Result<()>;
@@ -98,6 +99,7 @@ pub trait CliProtocol: Send + Sync {
     fn logs_args(&self, id: &str, tail: Option<u32>) -> Vec<String>;
     fn exec_args(&self, id: &str, cmd: &[String], env: Option<&HashMap<String, String>>, workdir: Option<&str>) -> Vec<String>;
     fn pull_image_args(&self, reference: &str) -> Vec<String>;
+    fn inspect_image_args(&self, reference: &str) -> Vec<String>;
     fn list_images_args(&self) -> Vec<String>;
     fn remove_image_args(&self, reference: &str, force: bool) -> Vec<String>;
     fn create_network_args(&self, name: &str, config: &NetworkConfig) -> Vec<String>;
@@ -108,6 +110,7 @@ pub trait CliProtocol: Send + Sync {
     fn parse_list_output(&self, stdout: &str) -> Result<Vec<ContainerInfo>>;
     fn parse_inspect_output(&self, stdout: &str) -> Result<ContainerInfo>;
     fn parse_list_images_output(&self, stdout: &str) -> Result<Vec<ImageInfo>>;
+    fn parse_inspect_image_output(&self, stdout: &str) -> Result<ImageInfo>;
     fn parse_container_id(&self, stdout: &str) -> Result<String>;
 }
 
@@ -261,6 +264,10 @@ impl CliProtocol for DockerProtocol {
         vec!["pull".into(), reference.into()]
     }
 
+    fn inspect_image_args(&self, reference: &str) -> Vec<String> {
+        vec!["image".into(), "inspect".into(), "--format".into(), "json".into(), reference.into()]
+    }
+
     fn list_images_args(&self) -> Vec<String> {
         vec!["images".into(), "--format".into(), "json".into()]
     }
@@ -316,6 +323,18 @@ impl CliProtocol for DockerProtocol {
         }).collect())
     }
 
+    fn parse_inspect_image_output(&self, stdout: &str) -> Result<ImageInfo> {
+        let entries: Vec<DockerImageEntry> = serde_json::from_str(stdout)?;
+        let e = entries.into_iter().next().ok_or_else(|| ComposeError::NotFound("Image inspect output empty".into()))?;
+        Ok(ImageInfo {
+            id: e.id,
+            repository: e.repository,
+            tag: e.tag,
+            size: e.size,
+            created: e.created,
+        })
+    }
+
     fn parse_inspect_output(&self, stdout: &str) -> Result<ContainerInfo> {
         let entries: Vec<DockerInspectOutput> = serde_json::from_str(stdout)?;
         let e = entries.into_iter().next().ok_or_else(|| ComposeError::NotFound("Inspect output empty".into()))?;
@@ -365,6 +384,7 @@ impl CliProtocol for AppleContainerProtocol {
     fn logs_args(&self, id: &str, tail: Option<u32>) -> Vec<String> { DockerProtocol.logs_args(id, tail) }
     fn exec_args(&self, id: &str, cmd: &[String], env: Option<&HashMap<String, String>>, workdir: Option<&str>) -> Vec<String> { DockerProtocol.exec_args(id, cmd, env, workdir) }
     fn pull_image_args(&self, reference: &str) -> Vec<String> { DockerProtocol.pull_image_args(reference) }
+    fn inspect_image_args(&self, reference: &str) -> Vec<String> { DockerProtocol.inspect_image_args(reference) }
     fn list_images_args(&self) -> Vec<String> { DockerProtocol.list_images_args() }
     fn remove_image_args(&self, reference: &str, force: bool) -> Vec<String> { DockerProtocol.remove_image_args(reference, force) }
     fn create_network_args(&self, name: &str, config: &NetworkConfig) -> Vec<String> { DockerProtocol.create_network_args(name, config) }
@@ -374,6 +394,7 @@ impl CliProtocol for AppleContainerProtocol {
     fn parse_list_output(&self, stdout: &str) -> Result<Vec<ContainerInfo>> { DockerProtocol.parse_list_output(stdout) }
     fn parse_inspect_output(&self, stdout: &str) -> Result<ContainerInfo> { DockerProtocol.parse_inspect_output(stdout) }
     fn parse_list_images_output(&self, stdout: &str) -> Result<Vec<ImageInfo>> { DockerProtocol.parse_list_images_output(stdout) }
+    fn parse_inspect_image_output(&self, stdout: &str) -> Result<ImageInfo> { DockerProtocol.parse_inspect_image_output(stdout) }
     fn parse_container_id(&self, stdout: &str) -> Result<String> { DockerProtocol.parse_container_id(stdout) }
 }
 
@@ -398,6 +419,7 @@ impl CliProtocol for LimaProtocol {
     fn logs_args(&self, id: &str, tail: Option<u32>) -> Vec<String> { DockerProtocol.logs_args(id, tail) }
     fn exec_args(&self, id: &str, cmd: &[String], env: Option<&HashMap<String, String>>, workdir: Option<&str>) -> Vec<String> { DockerProtocol.exec_args(id, cmd, env, workdir) }
     fn pull_image_args(&self, reference: &str) -> Vec<String> { DockerProtocol.pull_image_args(reference) }
+    fn inspect_image_args(&self, reference: &str) -> Vec<String> { DockerProtocol.inspect_image_args(reference) }
     fn list_images_args(&self) -> Vec<String> { DockerProtocol.list_images_args() }
     fn remove_image_args(&self, reference: &str, force: bool) -> Vec<String> { DockerProtocol.remove_image_args(reference, force) }
     fn create_network_args(&self, name: &str, config: &NetworkConfig) -> Vec<String> { DockerProtocol.create_network_args(name, config) }
@@ -407,6 +429,7 @@ impl CliProtocol for LimaProtocol {
     fn parse_list_output(&self, stdout: &str) -> Result<Vec<ContainerInfo>> { DockerProtocol.parse_list_output(stdout) }
     fn parse_inspect_output(&self, stdout: &str) -> Result<ContainerInfo> { DockerProtocol.parse_inspect_output(stdout) }
     fn parse_list_images_output(&self, stdout: &str) -> Result<Vec<ImageInfo>> { DockerProtocol.parse_list_images_output(stdout) }
+    fn parse_inspect_image_output(&self, stdout: &str) -> Result<ImageInfo> { DockerProtocol.parse_inspect_image_output(stdout) }
     fn parse_container_id(&self, stdout: &str) -> Result<String> { DockerProtocol.parse_container_id(stdout) }
 }
 
@@ -529,6 +552,12 @@ impl<P: CliProtocol> ContainerBackend for CliBackend<P> {
     async fn pull_image(&self, reference: &str) -> Result<()> {
         let args = self.protocol.pull_image_args(reference);
         self.exec_raw(&args).await.map(|_| ())
+    }
+
+    async fn inspect_image(&self, reference: &str) -> Result<ImageInfo> {
+        let args = self.protocol.inspect_image_args(reference);
+        let (stdout, _) = self.exec_raw(&args).await?;
+        self.protocol.parse_inspect_image_output(&stdout)
     }
 
     async fn list_images(&self) -> Result<Vec<ImageInfo>> {

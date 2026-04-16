@@ -89,6 +89,71 @@ pub unsafe extern "C" fn js_container_run(spec_ptr: *const StringHeader) -> *mut
     promise
 }
 
+/// Inspect an image
+/// FFI: js_container_inspectImage(reference: *const StringHeader) -> *mut Promise
+#[no_mangle]
+pub unsafe extern "C" fn js_container_inspectImage(reference_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
+
+    let reference = match string_from_header(reference_ptr) {
+        Some(s) => s,
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move {
+                Err::<u64, String>("Invalid image reference".to_string())
+            });
+            return promise;
+        }
+    };
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let backend = match get_global_backend().await {
+            Ok(b) => Arc::clone(b),
+            Err(e) => return Err::<u64, String>(e.to_string()),
+        };
+        match backend.inspect_image(&reference).await {
+            Ok(info) => {
+                let handle_id = types::register_image_info(info);
+                Ok(handle_id as u64)
+            }
+            Err(e) => Err::<u64, String>(e.to_string()),
+        }
+    });
+
+    promise
+}
+
+/// Check if an image exists locally
+/// FFI: js_container_imageExists(reference: *const StringHeader) -> *mut Promise
+#[no_mangle]
+pub unsafe extern "C" fn js_container_imageExists(reference_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
+
+    let reference = match string_from_header(reference_ptr) {
+        Some(s) => s,
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move {
+                Err::<u64, String>("Invalid image reference".to_string())
+            });
+            return promise;
+        }
+    };
+
+    crate::common::spawn_for_promise_deferred(promise as *mut u8, async move {
+        let backend = match get_global_backend().await {
+            Ok(b) => Arc::clone(b),
+            Err(_) => return Ok(false),
+        };
+        match backend.inspect_image(&reference).await {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }, |exists| {
+        perry_runtime::JSValue::bool(exists).bits()
+    });
+
+    promise
+}
+
 /// Create a container from the given spec without starting it
 /// FFI: js_container_create(spec_json: *const StringHeader) -> *mut Promise
 #[no_mangle]
