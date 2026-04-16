@@ -8,7 +8,7 @@ use std::sync::Arc;
 use perry_container_compose::ComposeEngine;
 
 pub struct ComposeWrapper {
-    engine: Arc<ComposeEngine>,
+    pub engine: Arc<ComposeEngine>,
 }
 
 impl ComposeWrapper {

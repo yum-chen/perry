@@ -22,8 +22,8 @@ pub async fn alloy_container_run_capability(
     let spec = ContainerSpec {
         image: format!("{}@{}", image, digest),
         name: Some(format!("alloy-cap-{}-{}", name, rand::random::<u32>())),
-        ports: Some(vec![]),
-        volumes: Some(vec![]),
+        ports: None,
+        volumes: None,
         network: if grants.network { None } else { Some("none".to_string()) },
         rm: Some(true),
         env: grants.env.clone(),
@@ -33,7 +33,11 @@ pub async fn alloy_container_run_capability(
     };
 
     let backend = Arc::clone(get_global_backend().await?);
-    let handle = backend.run(&spec).await.map_err(|e| ContainerError::BackendError { code: -1, message: e.to_string() })?;
+    let profile = super::backend::SecurityProfile {
+        seccomp: None, // Use default restrictive profile
+        readonly_rootfs: true,
+    };
+    let handle = backend.run_with_security(&spec, &profile).await.map_err(|e| ContainerError::BackendError { code: -1, message: e.to_string() })?;
 
     backend.logs(&handle.id, None).await.map_err(|e| ContainerError::BackendError { code: -1, message: e.to_string() })
 }

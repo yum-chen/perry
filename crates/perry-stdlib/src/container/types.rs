@@ -97,7 +97,7 @@ pub enum ContainerError {
         reason: String,
     },
     DependencyCycle {
-        cycle: Vec<String>,
+        services: Vec<String>,
     },
     ServiceStartupFailed {
         service: String,
@@ -123,8 +123,8 @@ impl std::fmt::Display for ContainerError {
             ContainerError::VerificationFailed { image, reason } => {
                 write!(f, "Image verification failed for {}: {}", image, reason)
             }
-            ContainerError::DependencyCycle { cycle } => {
-                write!(f, "Dependency cycle detected: {}", cycle.join(" -> "))
+            ContainerError::DependencyCycle { services } => {
+                write!(f, "Dependency cycle detected: {}", services.join(" -> "))
             }
             ContainerError::ServiceStartupFailed { service, error } => {
                 write!(f, "Service {} failed to start: {}", service, error)
@@ -153,7 +153,7 @@ impl From<perry_container_compose::error::ComposeError> for ContainerError {
                 ContainerError::VerificationFailed { image, reason }
             }
             perry_container_compose::error::ComposeError::DependencyCycle { services } => {
-                ContainerError::DependencyCycle { cycle: services }
+                ContainerError::DependencyCycle { services }
             }
             perry_container_compose::error::ComposeError::ServiceStartupFailed {
                 service,
