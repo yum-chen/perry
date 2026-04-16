@@ -25,7 +25,11 @@ pub use error::{ComposeError, Result};
 pub use types::{ComposeHandle, ComposeService, ComposeSpec, ContainerLogs};
 pub use compose::ComposeEngine;
 pub use project::ComposeProject;
-pub use backend::{ContainerBackend, CliBackend, CliProtocol, DockerProtocol, AppleContainerProtocol, LimaProtocol, detect_backend};
+pub use backend::{
+    detect_backend, AppleBackend, AppleContainerProtocol, BackendProbeResult, CliBackend,
+    CliProtocol, ContainerBackend, DockerBackend, DockerProtocol, LimaBackend, LimaProtocol,
+    NetworkConfig, VolumeConfig,
+};
 
 // External crate re-exports for integration tests
 pub use indexmap;

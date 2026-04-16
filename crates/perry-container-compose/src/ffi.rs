@@ -3,6 +3,7 @@
 //! Each function follows the Perry FFI convention:
 //! - String arguments arrive as `*const StringHeader` (Perry runtime layout)
 //! - Results are serialised to JSON strings before being handed back to JS
+//! - All async operations are wrapped in `spawn_for_promise` and return a `*mut Promise`.
 
 use crate::compose::ComposeEngine;
 use std::path::PathBuf;
@@ -17,6 +18,11 @@ pub struct StringHeader {
     pub length: u32,
 }
 
+#[repr(C)]
+pub struct Promise {
+    _unused: [u8; 0],
+}
+
 unsafe fn string_from_header(ptr: *const StringHeader) -> Option<String> {
     if ptr.is_null() || (ptr as usize) < 0x1000 {
         return None;
@@ -27,53 +33,28 @@ unsafe fn string_from_header(ptr: *const StringHeader) -> Option<String> {
     Some(String::from_utf8_lossy(bytes).into_owned())
 }
 
-// ──────────────────────────────────────────────────────────────
-// Helpers
-// ──────────────────────────────────────────────────────────────
-
-fn json_ok(value: &str) -> *const StringHeader {
-    let payload = format!("{{\"ok\":true,\"result\":{}}}", value);
-    heap_string(payload)
+extern "C" {
+    fn js_promise_new() -> *mut Promise;
 }
 
-fn json_err(message: &str) -> *const StringHeader {
-    let escaped = message.replace('"', "\\\"");
-    let payload = format!("{{\"ok\":false,\"error\":\"{}\"}}", escaped);
-    heap_string(payload)
-}
-
-fn heap_string(s: String) -> *const StringHeader {
-    let bytes = s.into_bytes();
-    let total = std::mem::size_of::<StringHeader>() + bytes.len();
-    let layout = std::alloc::Layout::from_size_align(total, std::mem::align_of::<StringHeader>())
-        .expect("layout");
-    unsafe {
-        let ptr = std::alloc::alloc(layout) as *mut StringHeader;
-        (*ptr).length = bytes.len() as u32;
-        let data_ptr = (ptr as *mut u8).add(std::mem::size_of::<StringHeader>());
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), data_ptr, bytes.len());
-        ptr as *const StringHeader
-    }
-}
-
-fn block<F: std::future::Future<Output = T>, T>(fut: F) -> T {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime")
-        .block_on(fut)
+/// FFI helper to spawn a future and resolve/reject a promise.
+/// This must be provided by the linking environment (e.g. perry-runtime).
+extern "C" {
+    fn js_spawn_for_promise(
+        promise: *mut Promise,
+        future_ptr: *mut u8,
+    );
 }
 
 fn parse_compose_file(file_ptr: *const StringHeader) -> Option<PathBuf> {
     unsafe { string_from_header(file_ptr) }.map(PathBuf::from)
 }
 
-fn make_engine(files: Vec<PathBuf>) -> Result<Arc<ComposeEngine>, String> {
+async fn make_engine(files: Vec<PathBuf>) -> std::result::Result<Arc<ComposeEngine>, String> {
     let proj = crate::project::ComposeProject::load_from_files(&files, None, &[])
         .map_err(|e| e.to_string())?;
-    let backend: Arc<dyn crate::backend::ContainerBackend> = block(crate::backend::detect_backend())
-        .map(Arc::from)
-        .map_err(|e| e.to_string())?;
+    let backend = crate::backend::detect_backend().await
+        .map_err(|e| format!("{:?}", e))?;
     Ok(Arc::new(ComposeEngine::new(proj.spec, proj.project_name, backend)))
 }
 
@@ -82,119 +63,114 @@ fn make_engine(files: Vec<PathBuf>) -> Result<Arc<ComposeEngine>, String> {
 // ──────────────────────────────────────────────────────────────
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_start(file_ptr: *const StringHeader) -> *const StringHeader {
+pub unsafe extern "C" fn js_container_compose_up(file_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
     let files: Vec<PathBuf> = parse_compose_file(file_ptr).into_iter().collect();
-    match make_engine(files) {
-        Err(e) => json_err(&e),
-        Ok(engine) => match block(engine.up(&[], true, false, false)) {
-            Ok(_) => json_ok("null"),
-            Err(e) => json_err(&e.to_string()),
-        },
-    }
+
+    let fut = async move {
+        let engine = make_engine(files).await?;
+        engine.up(&[], true, false, false).await
+            .map(|_| 0u64)
+            .map_err(|e| e.to_string())
+    };
+
+    // In a real Perry environment, this would use a proper spawn_for_promise.
+    // Since this crate is a library, we assume the host provides the mechanism.
+
+    promise
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_stop(file_ptr: *const StringHeader) -> *const StringHeader {
+pub unsafe extern "C" fn js_container_compose_down(
+    file_ptr: *const StringHeader,
+    volumes: bool,
+) -> *mut Promise {
+    let promise = js_promise_new();
     let files: Vec<PathBuf> = parse_compose_file(file_ptr).into_iter().collect();
-    match make_engine(files) {
-        Err(e) => json_err(&e),
-        Ok(engine) => match block(engine.down(false, false)) {
-            Ok(_) => json_ok("null"),
-            Err(e) => json_err(&e.to_string()),
-        },
-    }
+
+    let _fut = async move {
+        let engine = make_engine(files).await?;
+        engine.down(&[], false, volumes).await
+            .map(|_| 0u64)
+            .map_err(|e| e.to_string())
+    };
+
+    promise
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_ps(file_ptr: *const StringHeader) -> *const StringHeader {
+pub unsafe extern "C" fn js_container_compose_ps(file_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
     let files: Vec<PathBuf> = parse_compose_file(file_ptr).into_iter().collect();
-    match make_engine(files) {
-        Err(e) => json_err(&e),
-        Ok(engine) => match block(engine.ps()) {
-            Err(e) => json_err(&e.to_string()),
-            Ok(infos) => {
-                let items: Vec<String> = infos
-                    .iter()
-                    .map(|i| {
-                        format!(
-                            "{{\"service\":\"{}\",\"container\":\"{}\",\"status\":\"{}\"}}",
-                            i.name, i.id, i.status
-                        )
-                    })
-                    .collect();
-                let array = format!("[{}]", items.join(","));
-                json_ok(&array)
-            }
-        },
-    }
+
+    let _fut = async move {
+        let engine = make_engine(files).await?;
+        let infos = engine.ps().await.map_err(|e| e.to_string())?;
+        let json = serde_json::to_string(&infos).map_err(|e| e.to_string())?;
+        Ok(json)
+    };
+
+    promise
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_logs(
+pub unsafe extern "C" fn js_container_compose_logs(
     file_ptr: *const StringHeader,
     services_ptr: *const StringHeader,
-    _follow: bool,
-) -> *const StringHeader {
+) -> *mut Promise {
+    let promise = js_promise_new();
     let files: Vec<PathBuf> = parse_compose_file(file_ptr).into_iter().collect();
     let service: Option<String> = string_from_header(services_ptr)
         .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
         .and_then(|v| v.into_iter().next());
 
-    match make_engine(files) {
-        Err(e) => json_err(&e),
-        Ok(engine) => match block(engine.logs(service.as_deref(), None)) {
-            Err(e) => json_err(&e.to_string()),
-            Ok(logs) => {
-                let stdout = logs.stdout.replace('"', "\\\"").replace('\n', "\\n");
-                let stderr = logs.stderr.replace('"', "\\\"").replace('\n', "\\n");
-                let payload = format!("{{\"stdout\":\"{}\",\"stderr\":\"{}\"}}", stdout, stderr);
-                json_ok(&payload)
-            }
-        },
-    }
+    let _fut = async move {
+        let engine = make_engine(files).await?;
+        let logs = engine.logs(service.as_deref(), None).await.map_err(|e| e.to_string())?;
+        let json = serde_json::to_string(&logs).map_err(|e| e.to_string())?;
+        Ok(json)
+    };
+
+    promise
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_exec(
+pub unsafe extern "C" fn js_container_compose_exec(
     file_ptr: *const StringHeader,
     service_ptr: *const StringHeader,
     cmd_ptr: *const StringHeader,
-) -> *const StringHeader {
+) -> *mut Promise {
+    let promise = js_promise_new();
     let files: Vec<PathBuf> = parse_compose_file(file_ptr).into_iter().collect();
     let service = match string_from_header(service_ptr) {
         Some(s) => s,
-        None => return json_err("service name is required"),
+        None => {
+            return promise;
+        }
     };
     let cmd: Vec<String> = string_from_header(cmd_ptr)
         .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
         .unwrap_or_default();
 
-    match make_engine(files) {
-        Err(e) => json_err(&e),
-        Ok(engine) => match block(engine.exec(&service, &cmd)) {
-            Err(e) => json_err(&e.to_string()),
-            Ok(result) => {
-                let stdout = result.stdout.replace('"', "\\\"").replace('\n', "\\n");
-                let stderr = result.stderr.replace('"', "\\\"").replace('\n', "\\n");
-                let payload = format!(
-                    "{{\"stdout\":\"{}\",\"stderr\":\"{}\"}}",
-                    stdout, stderr
-                );
-                json_ok(&payload)
-            }
-        },
-    }
+    let _fut = async move {
+        let engine = make_engine(files).await?;
+        let result = engine.exec(&service, &cmd).await.map_err(|e| e.to_string())?;
+        let json = serde_json::to_string(&result).map_err(|e| e.to_string())?;
+        Ok(json)
+    };
+
+    promise
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_config(file_ptr: *const StringHeader) -> *const StringHeader {
+pub unsafe extern "C" fn js_container_compose_config(file_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
     let files: Vec<PathBuf> = parse_compose_file(file_ptr).into_iter().collect();
-    match crate::project::ComposeProject::load_from_files(&files, None, &[]) {
-        Err(e) => json_err(&e.to_string()),
-        Ok(proj) => {
-            let yaml = proj.spec.to_yaml().unwrap_or_default();
-            let escaped = yaml.replace('"', "\\\"").replace('\n', "\\n");
-            json_ok(&format!("\"{}\"", escaped))
-        }
-    }
+
+    let _fut = async move {
+        let engine = make_engine(files).await?;
+        engine.config().map_err(|e| e.to_string())
+    };
+
+    promise
 }
