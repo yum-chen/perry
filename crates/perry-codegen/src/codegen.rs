@@ -1263,6 +1263,7 @@ pub fn compile_module(hir: &HirModule, opts: CompileOptions) -> Result<Vec<u8>> 
         }
     }
 
+
     // Emit either `int main()` (entry module) or `void <prefix>__init()`
     // (non-entry module). The entry main calls each non-entry init in
     // order before running its own statements.

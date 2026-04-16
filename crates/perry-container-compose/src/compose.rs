@@ -108,8 +108,14 @@ impl ComposeEngine {
                 let net_config = net_config_opt.as_ref().cloned().unwrap_or_default();
                 let resolved_name = net_config.name.as_deref().unwrap_or(net_name.as_str());
                 tracing::info!("Creating network '{}'…", resolved_name);
+                let config = crate::backend::NetworkConfig {
+                    driver: net_config.driver.clone(),
+                    labels: net_config.labels.as_ref().map(|l| l.to_map()).unwrap_or_default(),
+                    internal: net_config.internal.unwrap_or(false),
+                    enable_ipv6: net_config.enable_ipv6.unwrap_or(false),
+                };
                 self.backend
-                    .create_network(resolved_name, &net_config)
+                    .create_network(resolved_name, &config)
                     .await
                     .map_err(|e| ComposeError::ServiceStartupFailed {
                         service: format!("network/{}", net_name),
@@ -128,8 +134,12 @@ impl ComposeEngine {
                 let vol_config = vol_config_opt.as_ref().cloned().unwrap_or_default();
                 let resolved_name = vol_config.name.as_deref().unwrap_or(vol_name.as_str());
                 tracing::info!("Creating volume '{}'…", resolved_name);
+                let config = crate::backend::VolumeConfig {
+                    driver: vol_config.driver.clone(),
+                    labels: vol_config.labels.as_ref().map(|l| l.to_map()).unwrap_or_default(),
+                };
                 self.backend
-                    .create_volume(resolved_name, &vol_config)
+                    .create_volume(resolved_name, &config)
                     .await
                     .map_err(|e| ComposeError::ServiceStartupFailed {
                         service: format!("volume/{}", vol_name),
@@ -189,9 +199,30 @@ impl ComposeEngine {
             if let Err(e) = res {
                 // ROLLBACK
                 tracing::error!("Service '{}' failed to start, rolling back...", svc_name);
+                // 1. Stop and remove containers
                 for c_name in started.iter().rev() {
                     let _ = self.backend.stop(c_name, None).await;
                     let _ = self.backend.remove(c_name, true).await;
+                }
+                // 2. Remove networks (non-external)
+                if let Some(networks) = &self.spec.networks {
+                    for (net_name, net_config_opt) in networks {
+                        let external = net_config_opt.as_ref().map_or(false, |c| c.external.unwrap_or(false));
+                        if !external {
+                            let resolved_name = net_config_opt.as_ref().and_then(|c| c.name.as_deref()).unwrap_or(net_name.as_str());
+                            let _ = self.backend.remove_network(resolved_name).await;
+                        }
+                    }
+                }
+                // 3. Remove volumes (only if newly created, but here we remove all newly created non-external)
+                if let Some(volumes) = &self.spec.volumes {
+                    for (vol_name, vol_config_opt) in volumes {
+                        let external = vol_config_opt.as_ref().map_or(false, |c| c.external.unwrap_or(false));
+                        if !external {
+                            let resolved_name = vol_config_opt.as_ref().and_then(|c| c.name.as_deref()).unwrap_or(vol_name.as_str());
+                            let _ = self.backend.remove_volume(resolved_name).await;
+                        }
+                    }
                 }
                 return Err(ComposeError::ServiceStartupFailed {
                     service: svc_name.clone(),
