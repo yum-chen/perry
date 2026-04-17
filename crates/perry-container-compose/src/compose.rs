@@ -3,14 +3,14 @@ use crate::service;
 use crate::types::{
     ComposeHandle, ComposeSpec, ContainerInfo, ContainerLogs, ContainerSpec,
 };
+use crate::backend::{ContainerBackend, NetworkConfig, VolumeConfig};
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use crate::backend::ContainerBackend;
 
-static COMPOSE_ENGINES: once_cell::sync::Lazy<std::sync::Mutex<IndexMap<u64, Arc<ComposeEngine>>>> =
-    once_cell::sync::Lazy::new(|| std::sync::Mutex::new(IndexMap::new()));
+static COMPOSE_ENGINES: once_cell::sync::Lazy<dashmap::DashMap<u64, Arc<ComposeEngine>>> =
+    once_cell::sync::Lazy::new(|| dashmap::DashMap::new());
 
 static NEXT_STACK_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -33,7 +33,7 @@ impl ComposeEngine {
         }
     }
 
-    fn register(&self) -> ComposeHandle {
+    fn register(self: Arc<Self>) -> ComposeHandle {
         let stack_id = NEXT_STACK_ID.fetch_add(1, Ordering::SeqCst);
         let services: Vec<String> = self.spec.services.keys().cloned().collect();
         let handle = ComposeHandle {
@@ -41,16 +41,12 @@ impl ComposeEngine {
             project_name: self.project_name.clone(),
             services,
         };
-        COMPOSE_ENGINES.lock().unwrap().insert(stack_id, Arc::new(ComposeEngine::new(
-            self.spec.clone(),
-            self.project_name.clone(),
-            Arc::clone(&self.backend),
-        )));
+        COMPOSE_ENGINES.insert(stack_id, self);
         handle
     }
 
     pub async fn up(
-        &self,
+        self: Arc<Self>,
         services: &[String],
         _detach: bool,
         _build: bool,
@@ -59,22 +55,32 @@ impl ComposeEngine {
         // 1. Create networks
         if let Some(networks) = &self.spec.networks {
             for (name, config) in networks {
-                if let Some(cfg) = config {
-                    self.backend.create_network(name, cfg).await?;
+                let net_cfg = if let Some(c) = config {
+                    NetworkConfig {
+                        driver: c.driver.clone(),
+                        labels: c.labels.as_ref().map(|l| l.to_map()).unwrap_or_default(),
+                        internal: c.internal.unwrap_or(false),
+                        enable_ipv6: c.enable_ipv6.unwrap_or(false),
+                    }
                 } else {
-                    self.backend.create_network(name, &Default::default()).await?;
-                }
+                    NetworkConfig::default()
+                };
+                self.backend.create_network(name, &net_cfg).await?;
             }
         }
 
         // 2. Create volumes
         if let Some(volumes) = &self.spec.volumes {
             for (name, config) in volumes {
-                if let Some(cfg) = config {
-                    self.backend.create_volume(name, cfg).await?;
+                let vol_cfg = if let Some(c) = config {
+                    VolumeConfig {
+                        driver: c.driver.clone(),
+                        labels: c.labels.as_ref().map(|l| l.to_map()).unwrap_or_default(),
+                    }
                 } else {
-                    self.backend.create_volume(name, &Default::default()).await?;
-                }
+                    VolumeConfig::default()
+                };
+                self.backend.create_volume(name, &vol_cfg).await?;
             }
         }
 
@@ -91,7 +97,6 @@ impl ComposeEngine {
             let svc = self.spec.services.get(svc_name).unwrap();
             let container_name = service::service_container_name(svc, svc_name);
 
-            // Extract primary network if any
             let network = match &svc.networks {
                 Some(crate::types::ServiceNetworks::List(l)) => l.first().cloned(),
                 Some(crate::types::ServiceNetworks::Map(m)) => m.keys().next().cloned(),
@@ -101,46 +106,11 @@ impl ComposeEngine {
             let container_spec = ContainerSpec {
                 image: svc.image.clone().unwrap_or_default(),
                 name: Some(container_name.clone()),
-                ports: Some(svc.ports.as_ref().map(|p| p.iter().map(|ps| match ps {
-                    crate::types::PortSpec::Short(v) => match v {
-                        serde_yaml::Value::String(s) => s.clone(),
-                        serde_yaml::Value::Number(n) => n.to_string(),
-                        _ => v.as_str().unwrap_or_default().to_string(),
-                    },
-                    crate::types::PortSpec::Long(lp) => {
-                        let publ = lp.published.as_ref().map(|v| match v {
-                            serde_yaml::Value::String(s) => s.clone(),
-                            serde_yaml::Value::Number(n) => n.to_string(),
-                            _ => v.as_str().unwrap_or_default().to_string(),
-                        }).unwrap_or_default();
-                        let target = match &lp.target {
-                            serde_yaml::Value::String(s) => s.clone(),
-                            serde_yaml::Value::Number(n) => n.to_string(),
-                            _ => lp.target.as_str().unwrap_or_default().to_string(),
-                        };
-                        format!("{}:{}", publ, target)
-                    },
-                }).collect()).unwrap_or_default()),
-                volumes: Some(svc.volumes.as_ref().map(|v| v.iter().map(|vs| match vs {
-                    serde_yaml::Value::String(s) => s.clone(),
-                    _ => vs.as_str().unwrap_or_default().to_string(),
-                }).collect()).unwrap_or_default()),
-                env: Some(match &svc.environment {
-                    Some(crate::types::ListOrDict::Dict(d)) => d.iter().map(|(k, v)| (k.clone(), v.as_ref().map(|vv| match vv {
-                        serde_yaml::Value::String(s) => s.clone(),
-                        serde_yaml::Value::Number(n) => n.to_string(),
-                        serde_yaml::Value::Bool(b) => b.to_string(),
-                        _ => vv.as_str().unwrap_or_default().to_string(),
-                    }).unwrap_or_default())).collect(),
-                    Some(crate::types::ListOrDict::List(l)) => l.iter().filter_map(|s| s.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect(),
-                    None => HashMap::new(),
-                }),
-                cmd: Some(match &svc.command {
-                    Some(serde_yaml::Value::String(s)) => vec![s.clone()],
-                    Some(serde_yaml::Value::Sequence(seq)) => seq.iter().map(|v| v.as_str().unwrap_or_default().to_string()).collect(),
-                    _ => vec![],
-                }),
-                entrypoint: None,
+                ports: Some(svc.port_strings()),
+                volumes: Some(svc.volume_strings()),
+                env: Some(svc.resolved_env()),
+                cmd: svc.command_list(),
+                entrypoint: None, // TODO: handle entrypoint
                 network,
                 rm: None,
             };
@@ -218,7 +188,19 @@ impl ComposeEngine {
         &self,
         services: &[String],
         tail: Option<u32>,
+        follow: bool,
     ) -> Result<HashMap<String, String>> {
+        if follow {
+            // follow mode only supports one service at a time for CLI simplicity
+            let svc_name = services.first().ok_or_else(|| ComposeError::ValidationError {
+                message: "follow mode requires a service name".into(),
+            })?;
+            let svc = self.spec.services.get(svc_name).ok_or_else(|| ComposeError::NotFound(svc_name.clone()))?;
+            let container_name = service::service_container_name(svc, svc_name);
+            self.backend.logs_follow(&container_name, tail).await?;
+            return Ok(HashMap::new());
+        }
+
         let mut all_logs = HashMap::new();
         let target: Vec<&String> = if services.is_empty() {
             self.spec.services.keys().collect()
@@ -284,6 +266,10 @@ impl ComposeEngine {
         self.stop(services).await?;
         self.start(services).await
     }
+}
+
+pub fn get_engine(handle_id: u64) -> Option<Arc<ComposeEngine>> {
+    COMPOSE_ENGINES.get(&handle_id).map(|r| Arc::clone(r.value()))
 }
 
 pub fn resolve_startup_order(spec: &ComposeSpec) -> Result<Vec<String>> {
