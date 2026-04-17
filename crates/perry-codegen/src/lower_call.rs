@@ -4527,6 +4527,20 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
         class_filter: None,
         runtime: "js_nanoid", args: &[], ret: NR_PTR },
 
+    // ComposeHandle methods (class-based dispatch)
+    NativeModSig { module: "perry/container", has_receiver: true, method: "down",
+        class_filter: Some("ComposeHandle"),
+        runtime: "js_composeHandle_down", args: &[NA_F64], ret: NR_PTR },
+    NativeModSig { module: "perry/container", has_receiver: true, method: "ps",
+        class_filter: Some("ComposeHandle"),
+        runtime: "js_composeHandle_ps", args: &[], ret: NR_PTR },
+    NativeModSig { module: "perry/container", has_receiver: true, method: "logs",
+        class_filter: Some("ComposeHandle"),
+        runtime: "js_composeHandle_logs", args: &[NA_STR, NA_F64], ret: NR_PTR },
+    NativeModSig { module: "perry/container", has_receiver: true, method: "exec",
+        class_filter: Some("ComposeHandle"),
+        runtime: "js_composeHandle_exec", args: &[NA_STR, NA_STR], ret: NR_PTR },
+
     // ========== slugify ==========
     NativeModSig { module: "slugify", has_receiver: false, method: "slugify",
         class_filter: None,

@@ -33,7 +33,11 @@ impl ComposeEngine {
         }
     }
 
-    fn register(&self) -> ComposeHandle {
+    pub fn get_engine(stack_id: u64) -> Option<Arc<ComposeEngine>> {
+        COMPOSE_ENGINES.lock().unwrap().get(&stack_id).cloned()
+    }
+
+    pub fn register(self: Arc<Self>) -> ComposeHandle {
         let stack_id = NEXT_STACK_ID.fetch_add(1, Ordering::SeqCst);
         let services: Vec<String> = self.spec.services.keys().cloned().collect();
         let handle = ComposeHandle {
@@ -41,16 +45,12 @@ impl ComposeEngine {
             project_name: self.project_name.clone(),
             services,
         };
-        COMPOSE_ENGINES.lock().unwrap().insert(stack_id, Arc::new(ComposeEngine::new(
-            self.spec.clone(),
-            self.project_name.clone(),
-            Arc::clone(&self.backend),
-        )));
+        COMPOSE_ENGINES.lock().unwrap().insert(stack_id, self);
         handle
     }
 
     pub async fn up(
-        &self,
+        self: Arc<Self>,
         services: &[String],
         _detach: bool,
         _build: bool,
@@ -59,22 +59,30 @@ impl ComposeEngine {
         // 1. Create networks
         if let Some(networks) = &self.spec.networks {
             for (name, config) in networks {
-                if let Some(cfg) = config {
-                    self.backend.create_network(name, cfg).await?;
-                } else {
-                    self.backend.create_network(name, &Default::default()).await?;
-                }
+                let net_cfg = match config {
+                    Some(c) => crate::backend::NetworkConfig {
+                        driver: c.driver.clone(),
+                        labels: c.labels.as_ref().map(|l| l.to_map()).unwrap_or_default(),
+                        internal: c.internal.unwrap_or(false),
+                        enable_ipv6: c.enable_ipv6.unwrap_or(false),
+                    },
+                    None => crate::backend::NetworkConfig::default(),
+                };
+                self.backend.create_network(name, &net_cfg).await?;
             }
         }
 
         // 2. Create volumes
         if let Some(volumes) = &self.spec.volumes {
             for (name, config) in volumes {
-                if let Some(cfg) = config {
-                    self.backend.create_volume(name, cfg).await?;
-                } else {
-                    self.backend.create_volume(name, &Default::default()).await?;
-                }
+                let vol_cfg = match config {
+                    Some(c) => crate::backend::VolumeConfig {
+                        driver: c.driver.clone(),
+                        labels: c.labels.as_ref().map(|l| l.to_map()).unwrap_or_default(),
+                    },
+                    None => crate::backend::VolumeConfig::default(),
+                };
+                self.backend.create_volume(name, &vol_cfg).await?;
             }
         }
 
@@ -143,6 +151,8 @@ impl ComposeEngine {
                 entrypoint: None,
                 network,
                 rm: None,
+                read_only: svc.read_only,
+                security_opt: svc.security_opt.clone(),
             };
 
             match self.backend.run(&container_spec).await {

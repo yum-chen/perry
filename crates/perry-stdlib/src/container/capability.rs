@@ -2,7 +2,7 @@
 
 use super::types::{ContainerError, ContainerLogs, ContainerSpec};
 use super::verification;
-use super::get_global_backend;
+use super::backend::get_global_backend;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -32,7 +32,7 @@ pub async fn alloy_container_run_capability(
         ..Default::default()
     };
 
-    let backend = Arc::clone(get_global_backend().await?);
+    let backend = Arc::clone(&get_global_backend().await?);
     let handle = backend.run(&spec).await.map_err(|e| ContainerError::BackendError { code: -1, message: e.to_string() })?;
 
     backend.logs(&handle.id, None).await.map_err(|e| ContainerError::BackendError { code: -1, message: e.to_string() })

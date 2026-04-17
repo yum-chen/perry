@@ -26,35 +26,43 @@ impl ComposeWrapper {
     }
 
     pub async fn up(&self) -> Result<ComposeHandle, ContainerError> {
-        self.engine.up(&[], true, false, false).await.map_err(Into::into)
+        Arc::clone(&self.engine).up(&[], true, false, false).await.map_err(ContainerError::from)
     }
 
-    pub async fn down(&self, _handle: &ComposeHandle, volumes: bool) -> Result<(), ContainerError> {
-        self.engine.down(&[], false, volumes).await.map_err(Into::into)
+    pub async fn down(&self, volumes: bool) -> Result<(), ContainerError> {
+        self.engine.down(&[], false, volumes).await.map_err(ContainerError::from)
     }
 
-    pub async fn ps(&self, _handle: &ComposeHandle) -> Result<Vec<ContainerInfo>, ContainerError> {
-        self.engine.ps().await.map_err(Into::into)
+    pub async fn ps(&self) -> Result<Vec<ContainerInfo>, ContainerError> {
+        let infos = self.engine.ps().await.map_err(ContainerError::from)?;
+        Ok(infos.into_iter().map(Into::into).collect())
     }
 
-    pub async fn logs(&self, _handle: &ComposeHandle, service: Option<&str>, tail: Option<u32>) -> Result<ContainerLogs, ContainerError> {
-        self.engine.logs(service, tail).await.map_err(Into::into)
+    pub async fn logs(&self, service: Option<&str>, tail: Option<u32>) -> Result<ContainerLogs, ContainerError> {
+        let services = service.map(|s| vec![s.to_string()]).unwrap_or_default();
+        let logs_map = self.engine.logs(&services, tail).await.map_err(ContainerError::from)?;
+        let combined = logs_map.values().cloned().collect::<Vec<_>>().join("\n");
+        Ok(ContainerLogs {
+            stdout: combined,
+            stderr: String::new(),
+        })
     }
 
-    pub async fn exec(&self, _handle: &ComposeHandle, service: &str, cmd: &[String]) -> Result<ContainerLogs, ContainerError> {
-        self.engine.exec(service, cmd).await.map_err(Into::into)
+    pub async fn exec(&self, service: &str, cmd: &[String]) -> Result<ContainerLogs, ContainerError> {
+        let res = self.engine.exec(service, cmd, None, None).await.map_err(ContainerError::from)?;
+        Ok(res.into())
     }
 
     pub async fn start(&self, services: &[String]) -> Result<(), ContainerError> {
-        self.engine.start(services).await.map_err(Into::into)
+        self.engine.start(services).await.map_err(ContainerError::from)
     }
 
     pub async fn stop(&self, services: &[String]) -> Result<(), ContainerError> {
-        self.engine.stop(services).await.map_err(Into::into)
+        self.engine.stop(services).await.map_err(ContainerError::from)
     }
 
     pub async fn restart(&self, services: &[String]) -> Result<(), ContainerError> {
-        self.engine.restart(services).await.map_err(Into::into)
+        self.engine.restart(services).await.map_err(ContainerError::from)
     }
 }
 
@@ -65,10 +73,4 @@ pub async fn compose_up(
 ) -> Result<ComposeHandle, ContainerError> {
     let wrapper = ComposeWrapper::new(spec, backend);
     wrapper.up().await
-}
-
-/// Look up an existing engine by stack ID and wrap it in a `ComposeWrapper`.
-/// Returns `None` if no engine with that stack ID is registered.
-pub fn get_engine_wrapper(stack_id: u64) -> Option<ComposeWrapper> {
-    ComposeEngine::get_engine(stack_id).map(ComposeWrapper::from_engine)
 }

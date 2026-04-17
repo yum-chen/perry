@@ -27,6 +27,7 @@ regex = "1"
 once_cell = "1"
 dashmap = "5"
 which = "6"
+home = "0.5"
 
 [dev-dependencies]
 tokio = { workspace = true }
