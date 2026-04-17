@@ -64,6 +64,12 @@ pub unsafe extern "C" fn js_handle_method_dispatch(
         return dispatch_net_socket(handle, method_name, args);
     }
 
+    // Try container-compose dispatch
+    #[cfg(feature = "container")]
+    if with_handle::<perry_container_compose::types::ComposeHandle, bool, _>(handle, |_| true).unwrap_or(false) {
+        return dispatch_container_compose(handle, method_name, args);
+    }
+
     // Unknown handle type - return undefined
     f64::from_bits(0x7FF8_0000_0000_0001)
 }
@@ -459,4 +465,94 @@ pub unsafe extern "C" fn js_stdlib_init_dispatch() {
     js_register_handle_method_dispatch(js_handle_method_dispatch);
     js_register_handle_property_dispatch(js_handle_property_dispatch);
     js_register_handle_property_set_dispatch(js_handle_property_set_dispatch);
+}
+
+/// Dispatch method calls on container-compose handles
+#[cfg(feature = "container")]
+unsafe fn dispatch_container_compose(handle: i64, method: &str, args: &[f64]) -> f64 {
+    use perry_runtime::value::js_is_truthy;
+    use perry_runtime::object::js_object_get_field_by_name_f64;
+    use perry_runtime::array::{js_array_length, js_array_get_f64};
+
+    match method {
+        "down" => {
+            let options = if args.len() >= 1 { args[0] } else { f64::from_bits(0x7FFC_0000_0000_0001) };
+            let volumes = if !options.is_nan() && (options.to_bits() & 0x7FFF_0000_0000_0000) == 0x7FFD_0000_0000_0000 {
+                 let obj_ptr = (options.to_bits() & 0x0000_FFFF_FFFF_FFFF) as *const perry_runtime::ObjectHeader;
+                 let key_str = "volumes";
+                 let key_ptr = perry_runtime::js_string_from_bytes(key_str.as_ptr(), key_str.len() as u32);
+                 let volumes_val = js_object_get_field_by_name_f64(obj_ptr, key_ptr);
+                 js_is_truthy(volumes_val) != 0
+            } else {
+                false
+            };
+            let promise = crate::container::js_container_compose_down(handle, if volumes { 1 } else { 0 });
+            f64::from_bits(0x7FFD_0000_0000_0000u64 | (promise as u64 & 0x0000_FFFF_FFFF_FFFF))
+        }
+        "ps" => {
+            let promise = crate::container::js_container_compose_ps(handle);
+            f64::from_bits(0x7FFD_0000_0000_0000u64 | (promise as u64 & 0x0000_FFFF_FFFF_FFFF))
+        }
+        "logs" => {
+            let options = if args.len() >= 1 { args[0] } else { f64::from_bits(0x7FFC_0000_0000_0001) };
+            let mut service_ptr = std::ptr::null();
+            let mut tail = -1;
+
+            if !options.is_nan() && (options.to_bits() & 0x7FFF_0000_0000_0000) == 0x7FFD_0000_0000_0000 {
+                 let obj_ptr = (options.to_bits() & 0x0000_FFFF_FFFF_FFFF) as *const perry_runtime::ObjectHeader;
+
+                 // Extract service
+                 let s_key_str = "service";
+                 let s_key_ptr = perry_runtime::js_string_from_bytes(s_key_str.as_ptr(), s_key_str.len() as u32);
+                 let s_val = js_object_get_field_by_name_f64(obj_ptr, s_key_ptr);
+                 if (s_val.to_bits() & 0x7FFF_0000_0000_0000) == 0x7FFF_0000_0000_0000 {
+                     service_ptr = (s_val.to_bits() & 0x0000_FFFF_FFFF_FFFF) as *const perry_runtime::StringHeader;
+                 }
+
+                 // Extract tail
+                 let t_key_str = "tail";
+                 let t_key_ptr = perry_runtime::js_string_from_bytes(t_key_str.as_ptr(), t_key_str.len() as u32);
+                 let t_val = js_object_get_field_by_name_f64(obj_ptr, t_key_ptr);
+                 if !t_val.is_nan() && (t_val.to_bits() & 0x7FFE_0000_0000_0000) != 0x7FF8_0000_0000_0000 {
+                     tail = t_val as i32;
+                 }
+            }
+            let promise = crate::container::js_container_compose_logs(handle, service_ptr, tail);
+            f64::from_bits(0x7FFD_0000_0000_0000u64 | (promise as u64 & 0x0000_FFFF_FFFF_FFFF))
+        }
+        "exec" if args.len() >= 2 => {
+            let s_val = args[0];
+            if (s_val.to_bits() & 0x7FFF_0000_0000_0000) != 0x7FFF_0000_0000_0000 {
+                return f64::from_bits(0x7FFC_0000_0000_0001); // return undefined
+            }
+            let service_ptr = (s_val.to_bits() & 0x0000_FFFF_FFFF_FFFF) as *const perry_runtime::StringHeader;
+
+            let c_val = args[1];
+            if (c_val.to_bits() & 0x7FFF_0000_0000_0000) != 0x7FFD_0000_0000_0000 {
+                 return f64::from_bits(0x7FFC_0000_0000_0001);
+            }
+            let cmd_ptr = (c_val.to_bits() & 0x0000_FFFF_FFFF_FFFF) as *const perry_runtime::ArrayHeader;
+
+            let len = js_array_length(cmd_ptr);
+            let mut cmd_vec = Vec::new();
+            for i in 0..len {
+                let val = js_array_get_f64(cmd_ptr, i);
+                // Verify it's a string
+                if (val.to_bits() & 0x7FFF_0000_0000_0000) == 0x7FFF_0000_0000_0000 {
+                    let s_ptr = (val.to_bits() & 0x0000_FFFF_FFFF_FFFF) as *const perry_runtime::StringHeader;
+                    if !s_ptr.is_null() {
+                        let s_len = (*s_ptr).byte_len as usize;
+                        let s_data = (s_ptr as *const u8).add(std::mem::size_of::<perry_runtime::StringHeader>());
+                        let s = std::str::from_utf8(std::slice::from_raw_parts(s_data, s_len)).unwrap_or("");
+                        cmd_vec.push(s.to_string());
+                    }
+                }
+            }
+            let cmd_json = serde_json::to_string(&cmd_vec).unwrap_or_else(|_| "[]".to_string());
+            let cmd_json_ptr = perry_runtime::js_string_from_bytes(cmd_json.as_ptr(), cmd_json.len() as u32);
+            let promise = crate::container::js_container_compose_exec(handle, service_ptr, cmd_json_ptr);
+            f64::from_bits(0x7FFD_0000_0000_0000u64 | (promise as u64 & 0x0000_FFFF_FFFF_FFFF))
+        }
+        _ => f64::from_bits(0x7FFC_0000_0000_0001), // undefined
+    }
 }

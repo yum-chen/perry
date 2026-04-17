@@ -675,5 +675,22 @@ pub unsafe extern "C" fn js_container_compose_exec(
 
 /// Initialize the container module (called during runtime startup)
 #[no_mangle]
-pub extern "C" fn js_container_module_init() {
+pub unsafe extern "C" fn js_container_module_init() {
+    #[cfg(feature = "async-runtime")]
+    {
+        // Trigger background detection of the container backend
+        crate::common::spawn(async {
+            let _ = get_global_backend().await;
+        });
+    }
+}
+
+/// FFI: js_container_composeUp_jsval(spec_val: f64) -> *mut Promise
+#[no_mangle]
+pub unsafe extern "C" fn js_container_composeUp_jsval(spec_val: f64) -> *mut Promise {
+    extern "C" {
+        fn js_json_stringify(value: f64, type_hint: u32) -> *mut perry_runtime::StringHeader;
+    }
+    let spec_ptr = js_json_stringify(spec_val, 1); // type_hint 1 = object
+    js_container_composeUp(spec_ptr)
 }

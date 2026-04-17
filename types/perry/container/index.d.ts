@@ -339,3 +339,9 @@ export function composeUp(spec: ComposeSpec): Promise<ComposeHandle>;
  * @returns "apple/container" on macOS/iOS, "podman" on all other platforms
  */
 export function getBackend(): string;
+
+/**
+ * Probes the system for available container backends.
+ * @returns Promise resolving to JSON string with probe results.
+ */
+export function detectBackend(): Promise<string>;

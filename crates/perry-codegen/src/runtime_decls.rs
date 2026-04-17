@@ -1572,4 +1572,14 @@ pub fn declare_stdlib_ffi(module: &mut LlModule) {
     // through `array_from_async_step`.
     module.declare_function("js_object_group_by", DOUBLE, &[DOUBLE, I64]);
     module.declare_function("js_array_from_async", DOUBLE, &[DOUBLE]);
+
+    // ========== perry/container ==========
+    module.declare_function("js_container_module_init", VOID, &[]);
+    module.declare_function("js_container_getBackend", I64, &[]);
+    module.declare_function("js_container_composeUp", I64, &[I64]);
+    module.declare_function("js_container_composeUp_jsval", I64, &[DOUBLE]);
+    module.declare_function("js_container_compose_down", I64, &[I64, I32]);
+    module.declare_function("js_container_compose_ps", I64, &[I64]);
+    module.declare_function("js_container_compose_logs", I64, &[I64, I64, I32]);
+    module.declare_function("js_container_compose_exec", I64, &[I64, I64, I64]);
 }

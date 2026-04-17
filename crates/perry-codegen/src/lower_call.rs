@@ -4569,6 +4569,17 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
     NativeModSig { module: "bcrypt", has_receiver: false, method: "compare",
         class_filter: None,
         runtime: "js_bcrypt_compare", args: &[NA_F64, NA_F64], ret: NR_PTR },
+
+    // ========== perry/container ==========
+    NativeModSig { module: "perry/container", has_receiver: false, method: "getBackend",
+        class_filter: None,
+        runtime: "js_container_getBackend", args: &[], ret: NR_STR },
+    NativeModSig { module: "perry/container", has_receiver: false, method: "detectBackend",
+        class_filter: None,
+        runtime: "js_container_detectBackend", args: &[], ret: NR_PTR },
+    NativeModSig { module: "perry/container", has_receiver: false, method: "composeUp",
+        class_filter: None,
+        runtime: "js_container_composeUp_jsval", args: &[NA_F64], ret: NR_PTR },
 ];
 
 /// Look up a native module method in the static dispatch table.

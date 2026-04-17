@@ -2282,11 +2282,7 @@ pub(crate) fn lower_expr(ctx: &mut FnCtx<'_>, expr: &Expr) -> Result<String> {
             // does the full lookup and primes the cache for next time.
             let site_id = ctx.ic_site_counter;
             ctx.ic_site_counter += 1;
-            let cache_name = format!("perry_ic_{}", site_id);
-            ctx.pending_declares.push((
-                format!("__ic_decl_{}", site_id),
-                DOUBLE, vec![],
-            ));
+            let cache_name = format!("perry_ic_{}_{}", sanitize_ic(&ctx.func.name), site_id);
             ctx.ic_globals.push(cache_name.clone());
 
             // Load obj->keys_array at offset 16 of ObjectHeader.
@@ -7792,4 +7788,11 @@ pub(crate) fn variant_name(e: &Expr) -> String {
         .find(|c: char| c == ' ' || c == '(' || c == '{')
         .unwrap_or(dbg.len());
     dbg[..end].to_string()
+}
+
+/// Sanitize a name for use in an IC global symbol.
+fn sanitize_ic(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .collect()
 }

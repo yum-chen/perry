@@ -137,11 +137,12 @@ proptest! {
             map.insert(key.clone(), val);
         }
 
+        let map_len = map.len();
         let lod = perry_stdlib::container::ListOrDict::Dict(map);
         let result = lod.to_map();
 
         // All keys should be preserved
-        prop_assert_eq!(result.len(), keys.len());
+        prop_assert_eq!(result.len(), map_len);
         for key in &keys {
             prop_assert!(result.contains_key(key), "key {} should be in result", key);
         }

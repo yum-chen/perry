@@ -2058,6 +2058,8 @@ fn compile_module_entry(
         {
             let blk = main.block_mut(0).unwrap();
             blk.call_void("js_gc_init", &[]);
+            // Initialize the container module (triggers backend detection)
+            blk.call_void("js_container_module_init", &[]);
             // Entry module's own string pool first.
             blk.call_void(&strings_init_name, &[]);
             // Then every non-entry module's init in order. Each
