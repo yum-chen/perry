@@ -168,8 +168,18 @@ pub unsafe extern "C" fn js_container_stop(id_ptr: *const StringHeader, timeout:
         }
     };
 
+    let options = perry_runtime::JSValue::from_bits(options_val.to_bits());
+    let volumes = if options.is_object() {
+        unsafe {
+            let key = perry_runtime::js_string_from_bytes(b"volumes".as_ptr(), 7);
+            let val = perry_runtime::js_object_get_field_by_name(options.as_pointer(), key);
+            val.as_bool()
+        }
+    } else {
+        false
+    };
     crate::common::spawn_for_promise(promise as *mut u8, async move {
-        let timeout_opt = if timeout < 0 { None } else { Some(timeout as u32) };
+        let timeout_opt = None;
         let backend = match get_global_backend().await {
             Ok(b) => Arc::clone(b),
             Err(e) => return Err::<u64, String>(e.to_string()),
@@ -273,11 +283,18 @@ pub unsafe extern "C" fn js_container_inspect(id_ptr: *const StringHeader) -> *m
 /// FFI: js_container_getBackend() -> *const StringHeader
 #[no_mangle]
 pub unsafe extern "C" fn js_container_getBackend() -> *const StringHeader {
-    // Note: this is synchronous and might return "unknown" if not initialized
     if let Some(b) = BACKEND.get() {
         return string_to_js(b.backend_name());
     }
-    string_to_js("unknown")
+    // Probing synchronously is generally bad but this is a synchronous FFI.
+    // We try to probe once using a local tokio runtime if needed.
+    let name = crate::common::runtime().block_on(async {
+        match get_global_backend().await {
+            Ok(b) => b.backend_name().to_string(),
+            Err(_) => "unknown".to_string(),
+        }
+    });
+    string_to_js(&name)
 }
 
 /// Detect backend and return probed info
@@ -484,10 +501,12 @@ pub unsafe extern "C" fn js_container_removeImage(reference_ptr: *const StringHe
 /// Bring up a Compose stack
 /// FFI: js_container_composeUp(spec_json: *const StringHeader) -> *mut Promise
 #[no_mangle]
-pub unsafe extern "C" fn js_container_composeUp(spec_ptr: *const perry_runtime::StringHeader) -> *mut Promise {
+pub unsafe extern "C" fn js_container_composeUp(spec_val: f64) -> *mut Promise {
     let promise = js_promise_new();
 
-    let spec = match types::parse_compose_spec(spec_ptr) {
+    let spec_js = perry_runtime::JSValue::from_bits(spec_val.to_bits());
+    let spec_json_ptr = unsafe { perry_runtime::json::js_json_stringify(f64::from_bits(spec_js.bits()), 0) };
+    let spec = match types::parse_compose_spec(spec_json_ptr) {
         Ok(s) => s,
         Err(e) => {
             crate::common::spawn_for_promise(promise as *mut u8, async move {
@@ -516,9 +535,19 @@ pub unsafe extern "C" fn js_container_composeUp(spec_ptr: *const perry_runtime::
 }
 
 /// Stop and remove compose stack.
-/// FFI: js_container_compose_down(handle_id: i64, volumes: i32) -> *mut Promise
+/// FFI: js_compose_stop(handle_id: i64, volumes: i32) -> *mut Promise
 #[no_mangle]
-pub unsafe extern "C" fn js_container_compose_down(handle_id: i64, volumes: i32) -> *mut Promise {
+pub unsafe extern "C" fn js_compose_stop(handle_id: i64, options_val: f64) -> *mut Promise {
+    let options = perry_runtime::JSValue::from_bits(options_val.to_bits());
+    let volumes = if options.is_object() {
+        unsafe {
+            let key = perry_runtime::js_string_from_bytes(b"volumes".as_ptr(), 7);
+            let val = perry_runtime::js_object_get_field_by_name(options.as_pointer(), key);
+            val.as_bool()
+        }
+    } else {
+        false
+    };
     let promise = js_promise_new();
 
     let handle = match types::take_compose_handle(handle_id as u64) {
@@ -537,7 +566,7 @@ pub unsafe extern "C" fn js_container_compose_down(handle_id: i64, volumes: i32)
             Err(e) => return Err::<u64, String>(e.to_string()),
         };
         let wrapper = compose::ComposeWrapper::new(types::ComposeSpec::default(), backend);
-        match wrapper.down(&handle, volumes != 0).await {
+        match wrapper.down(&handle, volumes).await {
             Ok(()) => Ok(0u64),
             Err(e) => Err::<u64, String>(e.to_string()),
         }
@@ -547,9 +576,9 @@ pub unsafe extern "C" fn js_container_compose_down(handle_id: i64, volumes: i32)
 }
 
 /// Get container info for compose stack
-/// FFI: js_container_compose_ps(handle_id: i64) -> *mut Promise
+/// FFI: js_compose_ps(handle_id: i64) -> *mut Promise
 #[no_mangle]
-pub unsafe extern "C" fn js_container_compose_ps(handle_id: i64) -> *mut Promise {
+pub unsafe extern "C" fn js_compose_ps(handle_id: i64) -> *mut Promise {
     let promise = js_promise_new();
 
     let handle = match types::get_compose_handle(handle_id as u64) {
@@ -581,12 +610,11 @@ pub unsafe extern "C" fn js_container_compose_ps(handle_id: i64) -> *mut Promise
 }
 
 /// Get logs from compose stack
-/// FFI: js_container_compose_logs(handle_id: i64, service: *const StringHeader, tail: i32) -> *mut Promise
+/// FFI: js_compose_logs(handle_id: i64, service: *const StringHeader, tail: i32) -> *mut Promise
 #[no_mangle]
-pub unsafe extern "C" fn js_container_compose_logs(
+pub unsafe extern "C" fn js_compose_logs(
     handle_id: i64,
-    service_ptr: *const StringHeader,
-    tail: i32,
+    options_val: f64,
 ) -> *mut Promise {
     let promise = js_promise_new();
 
@@ -600,8 +628,21 @@ pub unsafe extern "C" fn js_container_compose_logs(
         }
     };
 
-    let service = unsafe { string_from_header(service_ptr) };
-    let tail_opt = if tail >= 0 { Some(tail as u32) } else { None };
+    let options = perry_runtime::JSValue::from_bits(options_val.to_bits());
+    let (service, tail_opt) = if options.is_object() {
+        unsafe {
+            let s_key = perry_runtime::js_string_from_bytes(b"service".as_ptr(), 7);
+            let s_val = perry_runtime::js_object_get_field_by_name(options.as_pointer(), s_key);
+            let s = string_from_header(s_val.as_string_ptr());
+
+            let t_key = perry_runtime::js_string_from_bytes(b"tail".as_ptr(), 4);
+            let t_val = perry_runtime::js_object_get_field_by_name(options.as_pointer(), t_key);
+            let t = if t_val.is_number() { Some(t_val.to_number() as u32) } else { None };
+            (s, t)
+        }
+    } else {
+        (None, None)
+    };
 
     crate::common::spawn_for_promise(promise as *mut u8, async move {
         let backend = match get_global_backend().await {
@@ -622,9 +663,14 @@ pub unsafe extern "C" fn js_container_compose_logs(
 }
 
 /// Execute command in compose service
-/// FFI: js_container_compose_exec(handle_id: i64, service: *const StringHeader, cmd_json: *const StringHeader) -> *mut Promise
+/// FFI: js_compose_exec(handle_id: i64, service: *const StringHeader, cmd_json: *const StringHeader) -> *mut Promise
 #[no_mangle]
-pub unsafe extern "C" fn js_container_compose_exec(
+#[no_mangle]
+pub unsafe extern "C" fn js_compose_start(spec_ptr: *const perry_runtime::StringHeader) -> *mut Promise {
+    js_container_composeUp(f64::from_bits(perry_runtime::JSValue::string_ptr(spec_ptr).bits()))
+}
+
+pub unsafe extern "C" fn js_compose_exec(
     handle_id: i64,
     service_ptr: *const StringHeader,
     cmd_json_ptr: *const StringHeader,

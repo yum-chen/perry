@@ -2459,7 +2459,16 @@ fn lower_module_decl(
                         if is_native {
                             // Register as native module function with the original method name
                             // e.g., import { v4 as uuid } from 'uuid' -> uuid maps to uuid.v4
-                            ctx.register_native_module(local.clone(), source.clone(), Some(imported.clone()));
+                            let ffi_name = match source.as_str() {
+                                "perry/container" => Some(format!("js_container_{}", imported)),
+                                "perry/compose" => match imported.as_str() {
+                                    "up" => Some("js_compose_start".to_string()),
+                                    "down" => Some("js_compose_stop".to_string()),
+                                    _ => Some(format!("js_compose_{}", imported)),
+                                },
+                                _ => Some(imported.clone()),
+                            };
+                            ctx.register_native_module(local.clone(), source.clone(), ffi_name);
                             // Auto-register parentPort from worker_threads as a native instance
                             // (it's a singleton, not created via `new`)
                             if source == "worker_threads" && imported == "parentPort" {
@@ -2677,14 +2686,31 @@ fn lower_module_decl(
                                             ctx.register_native_instance(name.clone(), module_name.to_string(), "App".to_string());
                                         }
                                         // Check if this is a named import that returns a handle (e.g., State from perry/ui)
-                                        if let Some((module_name, Some(method_name))) = ctx.lookup_native_module(func_name) {
-                                            if module_name == "perry/ui" {
-                                                match method_name {
-                                                    "State" | "Sheet" | "Toolbar" | "Window" | "LazyVStack"
-                                                    | "NavigationStack" | "Picker" | "Table" | "TabBar" => {
-                                                        ctx.register_native_instance(name.clone(), module_name.to_string(), method_name.to_string());
+                                        // Check if this is a named import that returns a handle (e.g., State from perry/ui)
+                                        let native_info = ctx.lookup_native_module(func_name)
+                                            .map(|(m, method)| (m.to_string(), method.map(|s| s.to_string())));
+                                        if let Some((module_name, method_opt)) = native_info {
+                                            if module_name == "perry/container" {
+                                                if let Some(method_name) = &method_opt {
+                                                    match method_name.as_str() {
+                                                        "js_container_composeUp" => {
+                                                            ctx.register_native_instance(name.clone(), module_name, "ComposeHandle".to_string());
+                                                        }
+                                                        "js_container_run" | "js_container_create" => {
+                                                            ctx.register_native_instance(name.clone(), module_name, "ContainerHandle".to_string());
+                                                        }
+                                                        _ => {}
                                                     }
-                                                    _ => {}
+                                                }
+                                            } else if module_name == "perry/ui" {
+                                                if let Some(method_name) = &method_opt {
+                                                    match method_name.as_str() {
+                                                        "State" | "Sheet" | "Toolbar" | "Window" | "LazyVStack"
+                                                        | "NavigationStack" | "Picker" | "Table" | "TabBar" => {
+                                                            ctx.register_native_instance(name.clone(), module_name, method_name.clone());
+                                                        }
+                                                        _ => {}
+                                                    }
                                                 }
                                             }
                                         }
@@ -4997,6 +5023,21 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                     Ok(Expr::SuperCall(args))
                 }
                 ast::Callee::Expr(expr) => {
+                    // Check for named native module imports (e.g., composeUp from perry/container)
+                    if let ast::Expr::Ident(ident) = expr.as_ref() {
+                        let name = ident.sym.to_string();
+                        if let Some((module_name, method_name)) = ctx.lookup_native_module(&name) {
+                            if let Some(ffi_name) = method_name {
+                                return Ok(Expr::NativeMethodCall {
+                                    module: module_name.to_string(),
+                                    class_name: None,
+                                    object: None,
+                                    method: ffi_name.to_string(),
+                                    args,
+                                });
+                            }
+                        }
+                    }
                     // Check for super.method() call
                     if let ast::Expr::SuperProp(super_prop) = expr.as_ref() {
                         if let ast::SuperProp::Ident(ident) = &super_prop.prop {

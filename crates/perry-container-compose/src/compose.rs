@@ -47,9 +47,9 @@ impl ComposeEngine {
     }
 
     /// Register this engine in the global registry and return a handle.
-    fn register(&self) -> ComposeHandle {
+    fn register(&self, spec: &ComposeSpec) -> ComposeHandle {
         let stack_id = NEXT_STACK_ID.fetch_add(1, Ordering::SeqCst);
-        let services: Vec<String> = self.spec.services.keys().cloned().collect();
+        let services: Vec<String> = spec.services.keys().cloned().collect();
         let handle = ComposeHandle {
             stack_id,
             project_name: self.project_name.clone(),
@@ -59,7 +59,7 @@ impl ComposeEngine {
             .lock()
             .unwrap()
             .insert(stack_id, Arc::new(ComposeEngine::new(
-                self.spec.clone(),
+                spec.clone(),
                 self.project_name.clone(),
                 Arc::clone(&self.backend),
             )));
@@ -89,7 +89,13 @@ impl ComposeEngine {
         _build: bool,
         _remove_orphans: bool,
     ) -> Result<ComposeHandle> {
-        let order = resolve_startup_order(&self.spec)?;
+        // Automatically interpolate environment variables in the spec
+        let yaml = self.spec.to_yaml().map_err(|e| ComposeError::validation(e.to_string()))?;
+        let env = std::env::vars().collect::<HashMap<String, String>>();
+        let interpolated_yaml = crate::yaml::interpolate_yaml(&yaml, &env);
+        let interpolated_spec = ComposeSpec::parse_str(&interpolated_yaml)?;
+
+        let order = resolve_startup_order(&interpolated_spec)?;
 
         // Filter to target services
         let target: Vec<&String> = if services.is_empty() {
@@ -99,7 +105,7 @@ impl ComposeEngine {
         };
 
         // 1. Create networks (skip external)
-        if let Some(networks) = &self.spec.networks {
+        if let Some(networks) = &interpolated_spec.networks {
             for (net_name, net_config_opt) in networks {
                 let external = net_config_opt.as_ref().map_or(false, |c| c.external.unwrap_or(false));
                 if external {
@@ -119,7 +125,7 @@ impl ComposeEngine {
         }
 
         // 2. Create volumes (skip external)
-        if let Some(volumes) = &self.spec.volumes {
+        if let Some(volumes) = &interpolated_spec.volumes {
             for (vol_name, vol_config_opt) in volumes {
                 let external = vol_config_opt.as_ref().map_or(false, |c| c.external.unwrap_or(false));
                 if external {
@@ -142,8 +148,7 @@ impl ComposeEngine {
         let mut started: Vec<String> = Vec::new();
 
         for svc_name in target {
-            let svc = self
-                .spec
+            let svc = interpolated_spec
                 .services
                 .get(svc_name)
                 .ok_or_else(|| ComposeError::NotFound(svc_name.clone()))?;
@@ -206,7 +211,7 @@ impl ComposeEngine {
         self.started_containers.lock().unwrap().extend(started);
 
         // Register and return handle
-        Ok(self.register())
+        Ok(self.register(&interpolated_spec))
     }
 
     // ============ down / stop ============
@@ -229,8 +234,7 @@ impl ComposeEngine {
 
         // 1. Stop and remove containers
         for svc_name in target {
-            let svc = self
-                .spec
+            let svc = self.spec
                 .services
                 .get(svc_name)
                 .ok_or_else(|| ComposeError::NotFound(svc_name.clone()))?;
@@ -262,7 +266,7 @@ impl ComposeEngine {
 
         // 3. Remove volumes (if requested)
         if remove_volumes {
-            if let Some(volumes) = &self.spec.volumes {
+        if let Some(volumes) = &self.spec.volumes {
                 for (vol_name, vol_config_opt) in volumes {
                     let external = vol_config_opt.as_ref().map_or(false, |c| c.external.unwrap_or(false));
                     if external {
@@ -326,8 +330,7 @@ impl ComposeEngine {
         };
 
         for svc_name in service_names {
-            let svc = self
-                .spec
+            let svc = self.spec
                 .services
                 .get(&svc_name)
                 .ok_or_else(|| ComposeError::NotFound(svc_name.clone()))?;
@@ -349,9 +352,8 @@ impl ComposeEngine {
         service: &str,
         cmd: &[String],
     ) -> Result<ContainerLogs> {
-        let svc = self
-            .spec
-            .services
+            let svc = self.spec
+                .services
             .get(service)
             .ok_or_else(|| ComposeError::NotFound(service.to_owned()))?;
 
@@ -388,8 +390,7 @@ impl ComposeEngine {
         };
 
         for svc_name in target {
-            let svc = self
-                .spec
+            let svc = self.spec
                 .services
                 .get(&svc_name)
                 .ok_or_else(|| ComposeError::NotFound(svc_name.clone()))?;
@@ -409,8 +410,7 @@ impl ComposeEngine {
         };
 
         for svc_name in target {
-            let svc = self
-                .spec
+            let svc = self.spec
                 .services
                 .get(&svc_name)
                 .ok_or_else(|| ComposeError::NotFound(svc_name.clone()))?;

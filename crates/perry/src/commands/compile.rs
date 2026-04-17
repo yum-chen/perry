@@ -2209,6 +2209,10 @@ fn collect_modules(
             }
             if perry_hir::requires_stdlib(&import.source) {
                 ctx.needs_stdlib = true;
+                if import.source == "perry/container" || import.source == "perry/compose" || import.source == "perry/container-compose" {
+                    // Force the 'container' feature for stdlib.
+                    ctx.native_module_imports.insert("perry/container".to_string());
+                }
                 // Track for `--minimal-stdlib` feature computation. Strip
                 // any "node:" prefix so the mapping table sees the bare
                 // module name.

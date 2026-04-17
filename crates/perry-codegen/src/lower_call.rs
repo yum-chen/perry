@@ -4569,6 +4569,38 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
     NativeModSig { module: "bcrypt", has_receiver: false, method: "compare",
         class_filter: None,
         runtime: "js_bcrypt_compare", args: &[NA_F64, NA_F64], ret: NR_PTR },
+
+    // ========== perry/container & perry/compose ==========
+    NativeModSig { module: "perry/container", has_receiver: false, method: "js_container_composeUp",
+        class_filter: None,
+        runtime: "js_container_composeUp", args: &[NA_F64], ret: NR_PTR },
+    NativeModSig { module: "perry/container", has_receiver: false, method: "js_container_getBackend",
+        class_filter: None,
+        runtime: "js_container_getBackend", args: &[], ret: NR_STR },
+    // ComposeHandle instance methods
+    NativeModSig { module: "perry/container", has_receiver: true, method: "ps",
+        class_filter: Some("ComposeHandle"),
+        runtime: "js_compose_ps", args: &[], ret: NR_PTR },
+    NativeModSig { module: "perry/container", has_receiver: true, method: "logs",
+        class_filter: Some("ComposeHandle"),
+        runtime: "js_compose_logs", args: &[NA_F64], ret: NR_PTR },
+    NativeModSig { module: "perry/container", has_receiver: true, method: "down",
+        class_filter: Some("ComposeHandle"),
+        runtime: "js_compose_stop", args: &[NA_F64], ret: NR_PTR },
+    NativeModSig { module: "perry/container", has_receiver: true, method: "exec",
+        class_filter: Some("ComposeHandle"),
+        runtime: "js_compose_exec", args: &[NA_STR, NA_PTR], ret: NR_PTR },
+
+    // perry/compose legacy dispatch
+    NativeModSig { module: "perry/compose", has_receiver: false, method: "js_compose_start",
+        class_filter: None,
+        runtime: "js_compose_start", args: &[NA_STR], ret: NR_PTR },
+    NativeModSig { module: "perry/compose", has_receiver: false, method: "js_compose_stop",
+        class_filter: None,
+        runtime: "js_compose_stop", args: &[NA_PTR, NA_F64], ret: NR_PTR },
+    NativeModSig { module: "perry/compose", has_receiver: false, method: "js_compose_ps",
+        class_filter: None,
+        runtime: "js_compose_ps", args: &[NA_PTR], ret: NR_PTR },
 ];
 
 /// Look up a native module method in the static dispatch table.
