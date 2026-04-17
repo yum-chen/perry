@@ -15,7 +15,7 @@ pub use types::{
 };
 
 use perry_runtime::{js_promise_new, Promise, StringHeader};
-pub use backend::{detect_backend, ContainerBackend};
+pub use backend::{detect_backend, ContainerBackend, SecurityProfile};
 use std::sync::OnceLock;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -24,7 +24,7 @@ use std::collections::HashMap;
 static BACKEND: OnceLock<Arc<dyn ContainerBackend>> = OnceLock::new();
 
 /// Get or initialize the global backend instance
-async fn get_global_backend() -> Result<&'static Arc<dyn ContainerBackend>, ContainerError> {
+pub async fn get_global_backend() -> Result<&'static Arc<dyn ContainerBackend>, ContainerError> {
     if let Some(b) = BACKEND.get() {
         return Ok(b);
     }
@@ -831,4 +831,8 @@ pub unsafe extern "C" fn js_container_compose_config(spec_ptr: *const StringHead
 /// Initialize the container module (called during runtime startup)
 #[no_mangle]
 pub extern "C" fn js_container_module_init() {
+    // Trigger background detection of the backend
+    crate::common::spawn(async move {
+        let _ = get_global_backend().await;
+    });
 }

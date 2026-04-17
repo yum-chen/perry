@@ -37,11 +37,19 @@ pub struct VolumeConfig {
     pub labels: HashMap<String, String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct SecurityProfile {
+    pub seccomp: Option<String>,
+    pub readonly_rootfs: bool,
+}
+
 #[async_trait]
 pub trait ContainerBackend: Send + Sync {
     fn backend_name(&self) -> &str;
     async fn check_available(&self) -> Result<()>;
     async fn run(&self, spec: &ContainerSpec) -> Result<ContainerHandle>;
+    async fn run_with_security(&self, spec: &ContainerSpec, profile: &SecurityProfile) -> Result<ContainerHandle>;
+    async fn wait(&self, id: &str) -> Result<i32>;
     async fn create(&self, spec: &ContainerSpec) -> Result<ContainerHandle>;
     async fn start(&self, id: &str) -> Result<()>;
     async fn stop(&self, id: &str, timeout: Option<u32>) -> Result<()>;
@@ -342,7 +350,7 @@ impl<P: CliProtocol> CliBackend<P> {
 #[async_trait]
 impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
     fn backend_name(&self) -> &str {
-        self.bin.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
+        self.protocol.protocol_name()
     }
 
     async fn check_available(&self) -> Result<()> {
@@ -362,6 +370,37 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
         let (stdout, _) = self.exec_raw(&args).await?;
         let id = self.protocol.parse_container_id(&stdout)?;
         Ok(ContainerHandle { id, name: spec.name.clone() })
+    }
+
+    async fn run_with_security(&self, spec: &ContainerSpec, profile: &SecurityProfile) -> Result<ContainerHandle> {
+        let mut args = self.protocol.run_args(spec);
+        // Inject security flags before the image name
+        let image_idx = args.iter().position(|a| a == &spec.image).unwrap_or(args.len() - 1);
+
+        let mut security_args = Vec::new();
+        if profile.readonly_rootfs {
+            security_args.push("--read-only".to_string());
+        }
+        if let Some(seccomp) = &profile.seccomp {
+            security_args.extend(["--security-opt".into(), format!("seccomp={}", seccomp)]);
+        }
+
+        for (i, arg) in security_args.into_iter().enumerate() {
+            args.insert(image_idx + i, arg);
+        }
+
+        let (stdout, _) = self.exec_raw(&args).await?;
+        let id = self.protocol.parse_container_id(&stdout)?;
+        Ok(ContainerHandle { id, name: spec.name.clone() })
+    }
+
+    async fn wait(&self, id: &str) -> Result<i32> {
+        let args = vec!["wait".to_string(), id.to_string()];
+        let (stdout, _) = self.exec_raw(&args).await?;
+        stdout.trim().parse::<i32>().map_err(|_| ComposeError::BackendError {
+            code: -1,
+            message: "Failed to parse exit code from wait".into()
+        })
     }
 
     async fn create(&self, spec: &ContainerSpec) -> Result<ContainerHandle> {
@@ -466,6 +505,8 @@ impl ContainerBackend for Box<dyn ContainerBackend> {
     fn backend_name(&self) -> &str { self.as_ref().backend_name() }
     async fn check_available(&self) -> Result<()> { self.as_ref().check_available().await }
     async fn run(&self, spec: &ContainerSpec) -> Result<ContainerHandle> { self.as_ref().run(spec).await }
+    async fn run_with_security(&self, spec: &ContainerSpec, profile: &SecurityProfile) -> Result<ContainerHandle> { self.as_ref().run_with_security(spec, profile).await }
+    async fn wait(&self, id: &str) -> Result<i32> { self.as_ref().wait(id).await }
     async fn create(&self, spec: &ContainerSpec) -> Result<ContainerHandle> { self.as_ref().create(spec).await }
     async fn start(&self, id: &str) -> Result<()> { self.as_ref().start(id).await }
     async fn stop(&self, id: &str, timeout: Option<u32>) -> Result<()> { self.as_ref().stop(id, timeout).await }
@@ -488,6 +529,8 @@ impl ContainerBackend for Arc<dyn ContainerBackend> {
     fn backend_name(&self) -> &str { self.as_ref().backend_name() }
     async fn check_available(&self) -> Result<()> { self.as_ref().check_available().await }
     async fn run(&self, spec: &ContainerSpec) -> Result<ContainerHandle> { self.as_ref().run(spec).await }
+    async fn run_with_security(&self, spec: &ContainerSpec, profile: &SecurityProfile) -> Result<ContainerHandle> { self.as_ref().run_with_security(spec, profile).await }
+    async fn wait(&self, id: &str) -> Result<i32> { self.as_ref().wait(id).await }
     async fn create(&self, spec: &ContainerSpec) -> Result<ContainerHandle> { self.as_ref().create(spec).await }
     async fn start(&self, id: &str) -> Result<()> { self.as_ref().start(id).await }
     async fn stop(&self, id: &str, timeout: Option<u32>) -> Result<()> { self.as_ref().stop(id, timeout).await }
