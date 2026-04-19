@@ -270,9 +270,9 @@ pub unsafe extern "C" fn js_container_inspect(id_ptr: *const StringHeader) -> *m
 }
 
 /// Get the current backend name
-/// FFI: js_container_getBackend() -> f64 (NaN-boxed string)
+/// FFI: js_container_getBackend() -> *const StringHeader
 #[no_mangle]
-pub unsafe extern "C" fn js_container_getBackend() -> f64 {
+pub unsafe extern "C" fn js_container_getBackend() -> *const StringHeader {
     let name = if let Some(b) = BACKEND.get() {
         b.backend_name().to_string()
     } else {
@@ -283,8 +283,7 @@ pub unsafe extern "C" fn js_container_getBackend() -> f64 {
             }
         })
     };
-    let js_str = string_to_js(&name);
-    JSValue::string_ptr(js_str as *mut _).bits() as f64
+    string_to_js(&name)
 }
 
 /// Detect backend and return probed info
@@ -494,9 +493,8 @@ pub unsafe extern "C" fn js_container_removeImage(reference_ptr: *const StringHe
 pub unsafe extern "C" fn js_container_composeUp(spec_val: f64) -> *mut Promise {
     let promise = js_promise_new();
 
-    let spec_js = JSValue::from_bits(spec_val.to_bits());
     // Stringify to JSON for parsing into ComposeSpec
-    let spec_json_ptr = perry_runtime::json::js_json_stringify(spec_js.bits() as f64, 0);
+    let spec_json_ptr = perry_runtime::json::js_json_stringify(spec_val, 0);
 
     if spec_json_ptr.is_null() {
         crate::common::spawn_for_promise(promise as *mut u8, async move {
@@ -536,7 +534,7 @@ pub unsafe extern "C" fn js_container_composeUp(spec_val: f64) -> *mut Promise {
 /// Bring up a Compose stack (alias for start)
 #[no_mangle]
 pub unsafe extern "C" fn js_compose_start(spec_ptr: *const StringHeader) -> *mut Promise {
-    js_container_composeUp(JSValue::string_ptr(spec_ptr as *mut _).bits() as f64)
+    js_container_composeUp(f64::from_bits(JSValue::string_ptr(spec_ptr as *mut _).bits()))
 }
 
 /// Stop and remove compose stack.
