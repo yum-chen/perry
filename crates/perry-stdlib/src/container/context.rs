@@ -35,8 +35,12 @@ impl ContainerContext {
 
     pub fn get_handle<T: 'static + Send + Sync>(&self, id: u64) -> Option<Arc<T>> {
         self.handles.get(&id).and_then(|entry| {
-            entry.value().downcast_ref::<Arc<T>>().map(|Arc| Arc::clone(Arc))
+            entry.value().downcast_ref::<Arc<T>>().map(|arc| Arc::clone(arc))
         })
+    }
+
+    pub fn try_get_backend(&self) -> Option<Arc<dyn ContainerBackend>> {
+        self.backend.blocking_lock().clone()
     }
 
     pub async fn get_backend(&self) -> Result<Arc<dyn ContainerBackend>, String> {
@@ -45,9 +49,24 @@ impl ContainerContext {
             return Ok(Arc::clone(b));
         }
 
-        let b = detect_backend().await.map_err(|e| format!("No backend found: {:?}", e))?;
-        let shared = Arc::from(b);
-        *lock = Some(Arc::clone(&shared));
-        Ok(shared)
+        match detect_backend().await {
+            Ok(b) => {
+                let shared = Arc::from(b);
+                *lock = Some(Arc::clone(&shared));
+                Ok(shared)
+            }
+            Err(e) => {
+                // Try installer if TTY
+                let installer = perry_container_compose::installer::BackendInstaller::new();
+                if installer.is_tty {
+                    if let Ok(b) = installer.run().await {
+                        let shared = Arc::from(b.into_backend());
+                        *lock = Some(Arc::clone(&shared));
+                        return Ok(shared);
+                    }
+                }
+                Err(format!("No backend found: {:?}", e))
+            }
+        }
     }
 }

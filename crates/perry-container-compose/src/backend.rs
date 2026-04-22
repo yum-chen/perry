@@ -33,6 +33,32 @@ pub enum ExecutionStrategy {
     VmSpawn { config: serde_json::Value },
 }
 
+pub enum BackendDriver {
+    AppleContainer { bin: PathBuf },
+    Orbstack { bin: PathBuf },
+    Colima { bin: PathBuf },
+    RancherDesktop { bin: PathBuf },
+    Lima { bin: PathBuf, instance: String },
+    Podman { bin: PathBuf },
+    Nerdctl { bin: PathBuf },
+    Docker { bin: PathBuf },
+}
+
+impl BackendDriver {
+    pub fn into_backend(self) -> Box<dyn ContainerBackend> {
+        match self {
+            BackendDriver::AppleContainer { bin } => Box::new(CliBackend::new(bin, AppleContainerProtocol)),
+            BackendDriver::Orbstack { bin } => Box::new(CliBackend::new(bin, DockerProtocol)),
+            BackendDriver::Colima { bin } => Box::new(CliBackend::new(bin, DockerProtocol)),
+            BackendDriver::RancherDesktop { bin } => Box::new(CliBackend::new(bin, DockerProtocol)),
+            BackendDriver::Lima { bin, instance } => Box::new(CliBackend::new(bin, LimaProtocol { instance })),
+            BackendDriver::Podman { bin } => Box::new(CliBackend::new(bin, DockerProtocol)),
+            BackendDriver::Nerdctl { bin } => Box::new(CliBackend::new(bin, DockerProtocol)),
+            BackendDriver::Docker { bin } => Box::new(CliBackend::new(bin, DockerProtocol)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendProbeResult {
     pub name: String,
@@ -436,7 +462,7 @@ fn platform_candidates() -> &'static [&'static str] {
     }
 }
 
-async fn probe_candidate(name: &str) -> std::result::Result<Box<dyn ContainerBackend>, String> {
+pub async fn probe_candidate_driver(name: &str) -> std::result::Result<BackendDriver, String> {
     let which_bin = |name: &str| -> std::result::Result<PathBuf, String> {
         which::which(name).map_err(|_| format!("{} not found", name))
     };
@@ -444,7 +470,7 @@ async fn probe_candidate(name: &str) -> std::result::Result<Box<dyn ContainerBac
     match name {
         "apple/container" => {
             let bin = which_bin("container")?;
-            Ok(Box::new(CliBackend::new(bin, AppleContainerProtocol)))
+            Ok(BackendDriver::AppleContainer { bin })
         }
         "podman" => {
             let bin = which_bin("podman")?;
@@ -455,11 +481,11 @@ async fn probe_candidate(name: &str) -> std::result::Result<Box<dyn ContainerBac
                     return Err("no podman machine running".into());
                 }
             }
-            Ok(Box::new(CliBackend::new(bin, DockerProtocol)))
+            Ok(BackendDriver::Podman { bin })
         }
         "orbstack" => {
             let bin = which_bin("orb").or_else(|_| which_bin("docker")).map_err(|_| "orbstack not found")?;
-            Ok(Box::new(CliBackend::new(bin, DockerProtocol)))
+            Ok(BackendDriver::Orbstack { bin })
         }
         "colima" => {
             let bin = which_bin("colima")?;
@@ -468,7 +494,7 @@ async fn probe_candidate(name: &str) -> std::result::Result<Box<dyn ContainerBac
                 return Err("colima not running".into());
             }
             let dbin = which_bin("docker").map_err(|_| "docker cli not found for colima")?;
-            Ok(Box::new(CliBackend::new(dbin, DockerProtocol)))
+            Ok(BackendDriver::Colima { bin: dbin })
         }
         "lima" => {
             let bin = which_bin("limactl")?;
@@ -478,16 +504,20 @@ async fn probe_candidate(name: &str) -> std::result::Result<Box<dyn ContainerBac
                 .find(|v| v["status"] == "Running")
                 .and_then(|v| v["name"].as_str().map(|s| s.to_string()))
                 .ok_or("no running lima instance")?;
-            Ok(Box::new(CliBackend::new(bin, LimaProtocol { instance })))
+            Ok(BackendDriver::Lima { bin, instance })
         }
         "nerdctl" => {
             let bin = which_bin("nerdctl")?;
-            Ok(Box::new(CliBackend::new(bin, DockerProtocol)))
+            Ok(BackendDriver::Nerdctl { bin })
         }
         "docker" => {
             let bin = which_bin("docker")?;
-            Ok(Box::new(CliBackend::new(bin, DockerProtocol)))
+            Ok(BackendDriver::Docker { bin })
         }
         _ => Err("unknown backend".into()),
     }
+}
+
+async fn probe_candidate(name: &str) -> std::result::Result<Box<dyn ContainerBackend>, String> {
+    probe_candidate_driver(name).await.map(|d| d.into_backend())
 }

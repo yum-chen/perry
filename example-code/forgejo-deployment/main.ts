@@ -16,7 +16,8 @@
  * - Proper port mapping with firewall considerations
  */
 
-import { composeUp, getBackend } from 'perry/container';
+import { getBackend } from 'perry/container';
+import { up, ps, exec, logs, down } from 'perry/container-compose';
 
 // ──────────────────────────────────────────────────────────────
 // Verify Backend Support
@@ -33,7 +34,7 @@ const FORGEJO_VERSION = '1.23-stable';
 const postgresVersion = '16-alpine';
 
 // Stack name for tracking
-const stack = await composeUp({
+const stack = await up({
   name: 'forgejo-production',
   version: '3.8',
   services: {
@@ -102,7 +103,7 @@ const stack = await composeUp({
 
 console.log('\n🔍 Checking Forgejo stack status...\n');
 
-const statuses = await stack.ps();
+const statuses = await ps(stack);
 console.table(statuses);
 
 // Verify both services are running
@@ -110,9 +111,9 @@ const allRunning = statuses.every((s) => s.status.toLowerCase().includes('up') |
 if (!allRunning) {
   console.error('❌ Not all services are running!');
   console.log('Logs from forgejo service:');
-  const logs = await stack.logs('forgejo', 50);
-  console.log(logs.stdout);
-  await stack.down({ volumes: true });
+  const serviceLogs = await logs(stack, 'forgejo', 50);
+  console.log(serviceLogs.stdout);
+  await down(stack, { volumes: true });
   process.exit(1);
 }
 
@@ -124,7 +125,7 @@ console.log('✅ Stack is up and running!');
 
 console.log('\n🏥 Performing health checks...\n');
 
-const postgresHealth = await stack.exec('postgres', [
+const postgresHealth = await exec(stack, 'postgres', [
   'pg_isready',
   '-U',
   'forgejo',
@@ -147,7 +148,8 @@ if (postgresHealth.stdout.includes('accepting connections')) {
 
 console.log('\n📋 First run: Fetching initial admin setup info...\n');
 
-const initScript = await stack.exec(
+const initScript = await exec(
+  stack,
   'forgejo',
   ['bash', '-c', 'type forgejo 2>/dev/null || echo "Forgejo binary found"']
 );
@@ -180,16 +182,16 @@ Environment variables used:
 
 Useful commands:
   # View logs
-  await stack.logs('forgejo', 100);
+  await logs(stack, 'forgejo', 100);
 
   # Execute command in forgejo container
-  await stack.exec('forgejo', ['ls', '/data']);
+  await exec(stack, 'forgejo', ['ls', '/data']);
 
   # Stop stack (preserves data)
-  await stack.down();
+  await down(stack);
 
   # Stop stack and remove volumes (destroys all data)
-  await stack.down({ volumes: true });
+  await down(stack, { volumes: true });
 
 ─────────────────────────────────────────────────────────────
 `);
@@ -200,7 +202,7 @@ Useful commands:
 
 const cleanup = async () => {
   console.log('\n🧹 Cleaning up stack...');
-  await stack.down({ volumes: true });
+  await down(stack, { volumes: true });
   console.log('✅ Cleanup complete');
   process.exit(0);
 };

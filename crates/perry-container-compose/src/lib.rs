@@ -5,6 +5,7 @@ pub mod cli;
 pub mod compose;
 pub mod config;
 pub mod error;
+pub mod installer;
 pub mod project;
 pub mod service;
 pub mod types;

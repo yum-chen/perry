@@ -223,7 +223,7 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
         // These arrive as ExternFuncRef because perry/system imports aren't
         // lowered to NativeMethodCall in the HIR.
         if let Some(sig) = perry_system_table_lookup(name) {
-            return lower_perry_ui_table_call(ctx, sig, args);
+            return lower_native_table_call(ctx, sig, args);
         }
         // Built-in runtime extern functions (`js_weakmap_set`,
         // `js_regexp_exec`, etc.) that start with `js_` are resolved
@@ -2362,13 +2362,13 @@ pub(crate) fn lower_native_method_call(
     // perry/system dispatch: audioStart, audioGetLevel, getDeviceModel, etc.
     if module == "perry/system" && object.is_none() {
         if let Some(sig) = perry_system_table_lookup(method) {
-            return lower_perry_ui_table_call(ctx, sig, args);
+            return lower_native_table_call(ctx, sig, args);
         }
     }
 
     if module == "perry/workloads" && object.is_none() {
         if let Some(sig) = perry_workloads_table_lookup(method) {
-            return lower_perry_ui_table_call(ctx, sig, args);
+            return lower_native_table_call(ctx, sig, args);
         }
     }
 
@@ -2379,7 +2379,7 @@ pub(crate) fn lower_native_method_call(
         && method != "HStack"
     {
         if let Some(sig) = perry_ui_table_lookup(method) {
-            return lower_perry_ui_table_call(ctx, sig, args);
+            return lower_native_table_call(ctx, sig, args);
         }
         // Warn at compile time so missing methods are visible instead
         // of silently returning 0.0 (which causes null-pointer crashes
@@ -2389,13 +2389,13 @@ pub(crate) fn lower_native_method_call(
 
     if module == "perry/container" && object.is_none() {
         if let Some(sig) = perry_container_table_lookup(method) {
-            return lower_perry_ui_table_call(ctx, sig, args);
+            return lower_native_table_call(ctx, sig, args);
         }
     }
 
     if module == "perry/container-compose" && object.is_none() {
         if let Some(sig) = perry_container_compose_table_lookup(method) {
-            return lower_perry_ui_table_call(ctx, sig, args);
+            return lower_native_table_call(ctx, sig, args);
         }
     }
 
@@ -2609,6 +2609,7 @@ pub(crate) fn lower_native_method_call(
                 UiReturnKind::F64 => DOUBLE,
                 UiReturnKind::Void => crate::types::VOID,
                 UiReturnKind::Promise => I64,
+                UiReturnKind::Str => I64,
             };
             ctx.pending_declares.push((sig.runtime.to_string(), return_type, runtime_param_types));
             let ref_args: Vec<(crate::types::LlvmType, &str)> =
@@ -2629,6 +2630,10 @@ pub(crate) fn lower_native_method_call(
                 UiReturnKind::Promise => {
                     let promise = blk.call(I64, sig.runtime, &ref_args);
                     Ok(crate::expr::nanbox_pointer_inline(blk, &promise))
+                }
+                UiReturnKind::Str => {
+                    let ptr = blk.call(I64, sig.runtime, &ref_args);
+                    Ok(crate::expr::nanbox_string_inline(blk, &ptr))
                 }
             };
         }
@@ -3454,6 +3459,8 @@ enum UiReturnKind {
     Void,
     /// Promise return: returns a `*mut Promise` (i64). NaN-box as POINTER.
     Promise,
+    /// String return: returns a `*const StringHeader` (i64). NaN-box as STRING.
+    Str,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -3965,7 +3972,7 @@ static PERRY_CONTAINER_TABLE: &[UiSig] = &[
     UiSig { method: "removeImage", runtime: "js_container_removeImage",
             args: &[UiArgKind::Str, UiArgKind::F64], ret: UiReturnKind::Promise },
     UiSig { method: "getBackend", runtime: "js_container_getBackend",
-            args: &[], ret: UiReturnKind::F64 },
+            args: &[], ret: UiReturnKind::Str },
     UiSig { method: "composeUp", runtime: "js_container_composeUp",
             args: &[UiArgKind::Json], ret: UiReturnKind::Promise },
     UiSig { method: "build", runtime: "js_container_build",
@@ -4012,23 +4019,33 @@ fn perry_container_compose_table_lookup(method: &str) -> Option<&'static UiSig> 
 static PERRY_WORKLOADS_TABLE: &[UiSig] = &[
     UiSig { method: "runGraph", runtime: "js_workload_runGraph",
             args: &[UiArgKind::Json], ret: UiReturnKind::Promise },
+    UiSig { method: "inspectGraph", runtime: "js_workload_inspectGraph",
+            args: &[UiArgKind::Json], ret: UiReturnKind::Promise },
+    UiSig { method: "down", runtime: "js_workload_handle_down",
+            args: &[UiArgKind::I64Raw, UiArgKind::Json], ret: UiReturnKind::Promise },
+    UiSig { method: "status", runtime: "js_workload_handle_status",
+            args: &[UiArgKind::I64Raw], ret: UiReturnKind::Promise },
+    UiSig { method: "logs", runtime: "js_workload_handle_logs",
+            args: &[UiArgKind::I64Raw, UiArgKind::Str, UiArgKind::Json], ret: UiReturnKind::Promise },
+    UiSig { method: "exec", runtime: "js_workload_handle_exec",
+            args: &[UiArgKind::I64Raw, UiArgKind::Str, UiArgKind::Json], ret: UiReturnKind::Promise },
+    UiSig { method: "ps", runtime: "js_workload_handle_ps",
+            args: &[UiArgKind::I64Raw], ret: UiReturnKind::Promise },
 ];
 
 fn perry_workloads_table_lookup(method: &str) -> Option<&'static UiSig> {
     PERRY_WORKLOADS_TABLE.iter().find(|s| s.method == method)
 }
 
-/// Lower a perry/ui call described by `sig`. Walks each arg, applies
+/// Lower a native stdlib call described by `sig`. Walks each arg, applies
 /// the per-kind coercion to produce an LLVM SSA value of the right type,
 /// lazy-declares the runtime function, emits the call, and boxes the
 /// return value per `sig.ret`.
 ///
 /// Args length mismatch (caller passed wrong number of args) → falls
 /// back to lowering all args for side effects + returning the
-/// zero-sentinel. The catch-all is intentional: TS users may write
-/// `Text()` (no arg) or `Text(s, extra)` and we don't want to bail
-/// the entire compilation.
-fn lower_perry_ui_table_call(
+/// zero-sentinel.
+fn lower_native_table_call(
     ctx: &mut FnCtx<'_>,
     sig: &UiSig,
     args: &[Expr],
@@ -4107,6 +4124,7 @@ fn lower_perry_ui_table_call(
         UiReturnKind::F64 => DOUBLE,
         UiReturnKind::Void => crate::types::VOID,
         UiReturnKind::Promise => I64,
+        UiReturnKind::Str => I64,
     };
     ctx.pending_declares.push((
         sig.runtime.to_string(),
@@ -4135,6 +4153,11 @@ fn lower_perry_ui_table_call(
             let blk = ctx.block();
             let promise = blk.call(I64, sig.runtime, &arg_slices);
             Ok(nanbox_pointer_inline(blk, &promise))
+        }
+        UiReturnKind::Str => {
+            let blk = ctx.block();
+            let ptr = blk.call(I64, sig.runtime, &arg_slices);
+            Ok(nanbox_string_inline(blk, &ptr))
         }
     }
 }

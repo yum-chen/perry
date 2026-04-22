@@ -17,7 +17,7 @@ pub async fn alloy_container_run_capability(
     cmd: &[&str],
     grants: &CapabilityGrants,
 ) -> Result<ContainerLogs, ComposeError> {
-    let backend = get_global_backend_instance();
+    let backend = get_global_backend_instance().await;
     let digest = verification::verify_image(image, &backend).await?;
 
     let spec = ContainerSpec {
@@ -31,7 +31,7 @@ pub async fn alloy_container_run_capability(
     };
 
     let handle = backend.run(&spec.into()).await?;
-    let logs = backend.logs(&handle.id, None).await?;
+    let logs: perry_container_compose::types::ContainerLogs = backend.logs(&handle.id, None).await?;
 
     Ok(logs.into())
 }
