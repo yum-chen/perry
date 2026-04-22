@@ -7,6 +7,7 @@ pub mod capability;
 pub mod compose;
 pub mod types;
 pub mod verification;
+pub mod workload;
 
 // Re-export commonly used types
 pub use types::{
@@ -82,6 +83,97 @@ pub unsafe extern "C" fn js_container_run(spec_ptr: *const StringHeader) -> *mut
                 let handle_id = types::register_container_handle(handle);
                 Ok(handle_id as u64)
             }
+            Err(e) => Err::<u64, String>(e.to_string()),
+        }
+    });
+
+    promise
+}
+
+/// Construct a workload graph
+/// FFI: js_workload_graph(name: *const StringHeader, spec_json: *const StringHeader) -> *const StringHeader
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_graph(name_ptr: *const StringHeader, spec_json_ptr: *const StringHeader) -> *const StringHeader {
+    let name = match string_from_header(name_ptr) {
+        Some(s) => s,
+        None => return std::ptr::null(),
+    };
+    let spec_json = match string_from_header(spec_json_ptr) {
+        Some(s) => s,
+        None => return std::ptr::null(),
+    };
+
+    let mut graph: perry_container_compose::workload_types::WorkloadGraph = match serde_json::from_str(&spec_json) {
+        Ok(g) => g,
+        Err(_) => return std::ptr::null(),
+    };
+    graph.name = name;
+
+    match serde_json::to_string(&graph) {
+        Ok(json) => string_to_js(&json),
+        Err(_) => std::ptr::null(),
+    }
+}
+
+/// Construct a workload node
+/// FFI: js_workload_node(name: *const StringHeader, spec_json: *const StringHeader) -> *const StringHeader
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_node(name_ptr: *const StringHeader, spec_json_ptr: *const StringHeader) -> *const StringHeader {
+    let name = match string_from_header(name_ptr) {
+        Some(s) => s,
+        None => return std::ptr::null(),
+    };
+    let spec_json = match string_from_header(spec_json_ptr) {
+        Some(s) => s,
+        None => return std::ptr::null(),
+    };
+
+    let mut node: perry_container_compose::workload_types::WorkloadNode = match serde_json::from_str(&spec_json) {
+        Ok(n) => n,
+        Err(_) => return std::ptr::null(),
+    };
+    node.name = name;
+
+    match serde_json::to_string(&node) {
+        Ok(json) => string_to_js(&json),
+        Err(_) => std::ptr::null(),
+    }
+}
+
+/// Run a workload graph
+/// FFI: js_workload_runGraph(graph_json: *const StringHeader, opts_json: *const StringHeader) -> *mut Promise
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_runGraph(graph_ptr: *const StringHeader, opts_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
+
+    let graph_json = match string_from_header(graph_ptr) {
+        Some(s) => s,
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move {
+                Err::<u64, String>("Invalid graph JSON".to_string())
+            });
+            return promise;
+        }
+    };
+
+    let opts_json = string_from_header(opts_ptr);
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let graph: perry_container_compose::workload_types::WorkloadGraph = serde_json::from_str(&graph_json)
+            .map_err(|e| format!("Invalid WorkloadGraph: {}", e))?;
+
+        let opts: perry_container_compose::workload_types::RunGraphOptions = opts_json
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+
+        let backend = match get_global_backend().await {
+            Ok(b) => Arc::clone(b),
+            Err(e) => return Err::<u64, String>(e.to_string()),
+        };
+
+        let engine = perry_container_compose::workload_engine::WorkloadGraphEngine::new(backend);
+        match engine.run(graph, opts).await {
+            Ok(id) => Ok(id),
             Err(e) => Err::<u64, String>(e.to_string()),
         }
     });
@@ -395,6 +487,49 @@ pub unsafe extern "C" fn js_container_exec(
 }
 
 // ============ Image Management ============
+
+/// Build a container image
+/// FFI: js_container_build(spec_json: *const StringHeader, image_name: *const StringHeader) -> *mut Promise
+#[no_mangle]
+pub unsafe extern "C" fn js_container_build(spec_ptr: *const StringHeader, name_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
+
+    let spec_json = match string_from_header(spec_ptr) {
+        Some(s) => s,
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move {
+                Err::<u64, String>("Invalid build spec JSON".to_string())
+            });
+            return promise;
+        }
+    };
+
+    let image_name = match string_from_header(name_ptr) {
+        Some(s) => s,
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move {
+                Err::<u64, String>("Invalid image name".to_string())
+            });
+            return promise;
+        }
+    };
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let spec: perry_container_compose::types::ComposeServiceBuild = serde_json::from_str(&spec_json)
+            .map_err(|e| format!("Invalid build spec: {}", e))?;
+
+        let backend = match get_global_backend().await {
+            Ok(b) => Arc::clone(b),
+            Err(e) => return Err::<u64, String>(e.to_string()),
+        };
+        match backend.build(&spec, &image_name).await {
+            Ok(()) => Ok(0u64),
+            Err(e) => Err::<u64, String>(e.to_string()),
+        }
+    });
+
+    promise
+}
 
 /// Pull a container image
 /// FFI: js_container_pullImage(reference: *const StringHeader) -> *mut Promise

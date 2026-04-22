@@ -5,6 +5,8 @@
 //! - Results are serialised to JSON strings before being handed back to JS
 
 use crate::compose::ComposeEngine;
+use crate::workload_engine::WorkloadGraphEngine;
+use crate::workload_types::{WorkloadGraph, RunGraphOptions, WorkloadNode};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -197,4 +199,69 @@ pub unsafe extern "C" fn js_compose_config(file_ptr: *const StringHeader) -> *co
             json_ok(&format!("\"{}\"", escaped))
         }
     }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Workload FFI
+// ──────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_runGraph(
+    graph_json_ptr: *const StringHeader,
+    opts_json_ptr: *const StringHeader,
+) -> *const StringHeader {
+    let graph_json = match string_from_header(graph_json_ptr) {
+        Some(s) => s,
+        None => return json_err("graph JSON is required"),
+    };
+    let graph: WorkloadGraph = match serde_json::from_str(&graph_json) {
+        Ok(g) => g,
+        Err(e) => return json_err(&format!("invalid graph JSON: {}", e)),
+    };
+
+    let opts: RunGraphOptions = string_from_header(opts_json_ptr)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+
+    let backend = match block(crate::backend::detect_backend()) {
+        Ok(b) => Arc::from(b),
+        Err(_) => return json_err("no container backend found"),
+    };
+
+    match block(WorkloadGraphEngine::run(backend, graph, opts)) {
+        Ok(id) => json_ok(&id.to_string()),
+        Err(e) => json_err(&e.to_string()),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_inspectGraph(handle_id: f64) -> *const StringHeader {
+    let id = handle_id as u64;
+    // In a real impl we'd look up the engine and return its status.
+    // For now we return a dummy status.
+    json_ok("{\"healthy\":true,\"services\":{}}")
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_graph(
+    name_ptr: *const StringHeader,
+    nodes_json_ptr: *const StringHeader,
+) -> *const StringHeader {
+    let name = string_from_header(name_ptr).unwrap_or_default();
+    let nodes_json = string_from_header(nodes_json_ptr).unwrap_or_else(|| "{}".to_string());
+
+    let payload = format!("{{\"name\":\"{}\",\"nodes\":{}}}", name, nodes_json);
+    heap_string(payload)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_node(
+    name_ptr: *const StringHeader,
+    spec_json_ptr: *const StringHeader,
+) -> *const StringHeader {
+    let name = string_from_header(name_ptr).unwrap_or_default();
+    let spec_json = string_from_header(spec_json_ptr).unwrap_or_else(|| "{}".to_string());
+
+    let payload = format!("{{\"name\":\"{}\",\"spec\":{}}}", name, spec_json);
+    heap_string(payload)
 }

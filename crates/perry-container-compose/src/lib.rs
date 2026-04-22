@@ -15,6 +15,12 @@ pub mod project;
 pub mod service;
 pub mod types;
 pub mod yaml;
+pub mod installer;
+pub mod orchestrate;
+pub mod workload_types;
+pub mod workload_engine;
+pub mod commands;
+pub mod testing;
 
 // FFI exports (Perry TypeScript integration)
 #[cfg(feature = "ffi")]

@@ -1,0 +1,208 @@
+// perry-container.wit
+
+// Container lifecycle
+run: func(spec: container-spec) -> result<container-handle, container-error>
+create: func(spec: container-spec) -> result<container-handle, container-error>
+start: func(id: string) -> result<_, container-error>
+stop: func(id: string, timeout: option<u32>) -> result<_, container-error>
+remove: func(id: string, force: bool) -> result<_, container-error>
+
+// Inspection
+list: func(all: bool) -> result<list<container-info>, container-error>
+inspect: func(id: string) -> result<container-info, container-error>
+logs: func(id: string, tail: option<u32>) -> result<container-logs, container-error>
+exec: func(id: string, cmd: list<string>, env: option<list<tuple<string, string>>>, workdir: option<string>) -> result<container-logs, container-error>
+
+// Image management
+pull-image: func(reference: string) -> result<_, container-error>
+list-images: func() -> result<list<image-info>, container-error>
+remove-image: func(reference: string, force: bool) -> result<_, container-error>
+
+// Backend queries
+get-backend: func() -> string
+detect-backend: func() -> result<list<backend-info>, container-error>
+
+// Compose
+compose-up: func(spec: compose-spec) -> result<compose-handle, container-error>
+compose-down: func(handle: u64, volumes: bool) -> result<_, container-error>
+compose-ps: func(handle: u64) -> result<list<container-info>, container-error>
+compose-logs: func(handle: u64, service: option<string>, tail: option<u32>) -> result<container-logs, container-error>
+compose-exec: func(handle: u64, service: string, cmd: list<string>) -> result<container-logs, container-error>
+
+// Workload graph
+run-graph: func(graph: workload-graph, opts: run-graph-options) -> result<graph-handle, container-error>
+inspect-graph: func(graph: workload-graph) -> result<graph-status, container-error>
+graph-handle-down: func(handle: u64, opts: option<down-options>) -> result<_, container-error>
+graph-handle-status: func(handle: u64) -> result<graph-status, container-error>
+graph-handle-graph: func(handle: u64) -> result<workload-graph, container-error>
+graph-handle-logs: func(handle: u64, node: string, opts: option<logs-options>) -> result<container-logs, container-error>
+graph-handle-exec: func(handle: u64, node: string, cmd: list<string>) -> result<container-logs, container-error>
+graph-handle-ps: func(handle: u64) -> result<list<node-info>, container-error>
+
+// Record types
+record container-spec {
+    image: string,
+    name: option<string>,
+    ports: option<list<string>>,
+    volumes: option<list<string>>,
+    env: option<list<tuple<string, string>>>,
+    cmd: option<list<string>>,
+    entrypoint: option<list<string>>,
+    network: option<string>,
+    rm: option<bool>,
+}
+
+record container-handle {
+    id: string,
+    name: option<string>,
+}
+
+record container-info {
+    id: string,
+    name: string,
+    image: string,
+    status: string,
+    ports: list<string>,
+    labels: list<tuple<string, string>>,
+    created: string,
+}
+
+record container-logs {
+    stdout: string,
+    stderr: string,
+}
+
+record image-info {
+    id: string,
+    repository: string,
+    tag: string,
+    size: u64,
+    created: string,
+}
+
+record backend-info {
+    name: string,
+    available: bool,
+    reason: string,
+    version: option<string>,
+    mode: option<string>,
+    isolation-level: option<isolation-level>,
+}
+
+record compose-handle {
+    stack-id: u64,
+    project-name: string,
+    services: list<string>,
+}
+
+record workload-node {
+    id: string,
+    name: string,
+    image: option<string>,
+    ports: list<string>,
+    env: list<tuple<string, workload-env-value>>,
+    depends-on: list<string>,
+    runtime: runtime-spec,
+    policy: policy-spec,
+}
+
+record workload-graph {
+    name: string,
+    nodes: list<tuple<string, workload-node>>,
+    edges: list<workload-edge>,
+}
+
+record workload-edge {
+    from: string,
+    to: string,
+}
+
+record run-graph-options {
+    strategy: execution-strategy,
+    on-failure: failure-strategy,
+}
+
+record graph-status {
+    nodes: list<tuple<string, node-state>>,
+    healthy: bool,
+    errors: list<tuple<string, string>>,
+}
+
+record node-info {
+    node-id: string,
+    name: string,
+    container-id: option<string>,
+    state: node-state,
+    image: option<string>,
+}
+
+record graph-handle {
+    id: u64,
+}
+
+// Variants
+variant workload-env-value {
+    literal(string),
+    ref(workload-ref),
+}
+
+variant runtime-spec {
+    oci,
+    micro-vm(micro-vm-config),
+    wasm(option<string>),
+    auto,
+}
+
+variant policy-tier {
+    default,
+    isolated,
+    hardened,
+    untrusted,
+}
+
+variant ref-projection {
+    endpoint,
+    ip,
+    internal-url,
+}
+
+variant execution-strategy {
+    sequential,
+    max-parallel,
+    dependency-aware,
+    parallel-safe,
+}
+
+variant failure-strategy {
+    rollback-all,
+    partial-continue,
+    halt-graph,
+}
+
+variant node-state {
+    running,
+    stopped,
+    failed,
+    pending,
+    unknown,
+}
+
+variant isolation-level {
+    none,
+    process,
+    container,
+    micro-vm,
+    wasm,
+}
+
+// Error type
+variant container-error {
+    not-found(string),
+    backend-error(s32, string),
+    verification-failed(string, string),
+    dependency-cycle(list<string>),
+    service-startup-failed(string, string),
+    invalid-config(string),
+    no-backend-found(list<backend-info>),
+    backend-not-available(string, string),
+}

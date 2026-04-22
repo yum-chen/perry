@@ -102,6 +102,7 @@ pub const NATIVE_MODULES: &[&str] = &[
     "perry/container",
     "perry/compose",
     "perry/container-compose",
+    "perry/workloads",
     // SQLite
     "better-sqlite3",
 ];

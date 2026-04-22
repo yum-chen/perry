@@ -43,6 +43,7 @@ pub trait ContainerBackend: Send + Sync {
     async fn remove_network(&self, name: &str) -> Result<()>;
     async fn create_volume(&self, name: &str, config: &ComposeVolume) -> Result<()>;
     async fn remove_volume(&self, name: &str) -> Result<()>;
+    async fn build(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Result<()>;
 }
 
 pub trait CliProtocol: Send + Sync {
@@ -64,6 +65,7 @@ pub trait CliProtocol: Send + Sync {
     fn remove_network_args(&self, name: &str) -> Vec<String>;
     fn create_volume_args(&self, name: &str, config: &ComposeVolume) -> Vec<String>;
     fn remove_volume_args(&self, name: &str) -> Vec<String>;
+    fn build_args(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Vec<String>;
 
     fn parse_list_output(&self, stdout: &str) -> Result<Vec<ContainerInfo>>;
     fn parse_inspect_output(&self, stdout: &str) -> Result<ContainerInfo>;
@@ -256,6 +258,24 @@ impl CliProtocol for DockerProtocol {
         vec!["volume".into(), "rm".into(), name.into()]
     }
 
+    fn build_args(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Vec<String> {
+        let mut args = vec!["build".into(), "-t".into(), image_name.into()];
+        if let Some(ctx) = &spec.context {
+            args.push(ctx.clone());
+        } else {
+            args.push(".".into());
+        }
+        if let Some(df) = &spec.dockerfile {
+            args.extend(["-f".into(), df.clone()]);
+        }
+        if let Some(build_args) = &spec.args {
+            for (k, v) in build_args.to_map() {
+                args.extend(["--build-arg".into(), format!("{k}={v}")]);
+            }
+        }
+        args
+    }
+
     fn parse_list_output(&self, stdout: &str) -> Result<Vec<ContainerInfo>> {
         let entries: Vec<DockerListEntry> = stdout.lines()
             .filter_map(|l| serde_json::from_str(l).ok())
@@ -336,6 +356,7 @@ impl CliProtocol for AppleContainerProtocol {
     fn parse_inspect_output(&self, stdout: &str) -> Result<ContainerInfo> { DockerProtocol.parse_inspect_output(stdout) }
     fn parse_list_images_output(&self, stdout: &str) -> Result<Vec<ImageInfo>> { DockerProtocol.parse_list_images_output(stdout) }
     fn parse_container_id(&self, stdout: &str) -> Result<String> { DockerProtocol.parse_container_id(stdout) }
+    fn build_args(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Vec<String> { DockerProtocol.build_args(spec, image_name) }
 }
 
 pub struct LimaProtocol {
@@ -427,6 +448,11 @@ impl CliProtocol for LimaProtocol {
     fn parse_inspect_output(&self, stdout: &str) -> Result<ContainerInfo> { DockerProtocol.parse_inspect_output(stdout) }
     fn parse_list_images_output(&self, stdout: &str) -> Result<Vec<ImageInfo>> { DockerProtocol.parse_list_images_output(stdout) }
     fn parse_container_id(&self, stdout: &str) -> Result<String> { DockerProtocol.parse_container_id(stdout) }
+    fn build_args(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Vec<String> {
+        let mut args = vec!["shell".into(), self.instance.clone(), "nerdctl".into()];
+        args.extend(DockerProtocol.build_args(spec, image_name));
+        args
+    }
 }
 
 pub struct CliBackend {
@@ -561,6 +587,11 @@ impl ContainerBackend for CliBackend {
 
     async fn remove_volume(&self, name: &str) -> Result<()> {
         let args = self.protocol.remove_volume_args(name);
+        self.exec_raw(&args).await.map(|_| ())
+    }
+
+    async fn build(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Result<()> {
+        let args = self.protocol.build_args(spec, image_name);
         self.exec_raw(&args).await.map(|_| ())
     }
 }
