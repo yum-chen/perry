@@ -1,103 +1,52 @@
-//! Compose orchestration wrapper.
+//! ComposeWrapper — thin orchestration adapter over `perry_container_compose::ComposeEngine`.
 
-use super::types::{ArcComposeEngine, ContainerInfo, ContainerLogs};
-use perry_container_compose::types::{ComposeHandle, ComposeSpec};
-use perry_container_compose::ComposeEngine;
+use perry_container_compose::backend::ContainerBackend;
+use super::types::{
+    ComposeHandle, ComposeSpec, ContainerError, ContainerInfo, ContainerLogs,
+};
 use std::sync::Arc;
-use crate::container::mod_private::get_global_backend_instance;
-use crate::container::types::COMPOSE_HANDLES;
-use dashmap::DashMap;
+use perry_container_compose::ComposeEngine;
 
-pub async fn compose_up(spec: ComposeSpec) -> Result<ComposeHandle, String> {
-    let backend = get_global_backend_instance().await.map_err(|e| e.to_string())?;
-    let project_name = spec.name.clone().unwrap_or_else(|| "default".to_string());
-    let engine = Arc::new(ComposeEngine::new(spec, project_name, Arc::clone(&backend) as Arc<dyn perry_container_compose::ContainerBackend>));
-
-    let handle = Arc::clone(&engine).up(&[], true, false, false).await.map_err(|e| e.to_string())?;
-
-    Ok(handle)
+pub struct ComposeWrapper {
+    engine: Arc<ComposeEngine>,
 }
 
-pub async fn compose_down(id: u64, volumes: bool) -> Result<(), String> {
-    let engine = ComposeEngine::get_engine(id)
-        .ok_or_else(|| format!("Compose stack {} not found", id))?;
+impl ComposeWrapper {
+    pub fn new(spec: ComposeSpec, backend: Arc<dyn ContainerBackend>) -> Self {
+        let project_name = spec.name.clone().unwrap_or_else(|| "perry-stack".to_string());
 
-    engine.down(&[], false, volumes).await.map_err(|e| e.to_string())?;
-    ComposeEngine::unregister(id);
-    Ok(())
-}
-
-pub async fn compose_ps(id: u64) -> Result<Vec<ContainerInfo>, String> {
-    let engine = ComposeEngine::get_engine(id)
-        .ok_or_else(|| format!("Compose stack {} not found", id))?;
-
-    let infos = engine.ps().await.map_err(|e| e.to_string())?;
-    Ok(infos.into_iter().map(|i| ContainerInfo {
-        id: i.id,
-        name: i.name,
-        image: i.image,
-        status: i.status,
-        ports: i.ports,
-        created: i.created,
-    }).collect())
-}
-
-pub async fn compose_logs(id: u64, service: Option<String>, tail: Option<u32>) -> Result<ContainerLogs, String> {
-    let engine = ComposeEngine::get_engine(id)
-        .ok_or_else(|| format!("Compose stack {} not found", id))?;
-
-    let services = service.map(|s| vec![s]).unwrap_or_default();
-    let logs_map = engine.logs(&services, tail).await.map_err(|e| e.to_string())?;
-
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-
-    for (svc, logs) in logs_map {
-        stdout.push_str(&format!("[{}] {}\n", svc, logs.stdout));
-        stderr.push_str(&format!("[{}] {}\n", svc, logs.stderr));
+        Self {
+            engine: Arc::new(ComposeEngine::new(spec, project_name, backend)),
+        }
     }
 
-    Ok(ContainerLogs { stdout, stderr })
-}
+    pub async fn up(&self) -> Result<ComposeHandle, ContainerError> {
+        self.engine.up(&[], true, false, false).await.map_err(Into::into)
+    }
 
-pub async fn compose_exec(id: u64, service: String, cmd: Vec<String>, env: Option<std::collections::HashMap<String, String>>, workdir: Option<String>) -> Result<ContainerLogs, String> {
-    let engine = ComposeEngine::get_engine(id)
-        .ok_or_else(|| format!("Compose stack {} not found", id))?;
+    pub async fn down(&self, _handle: &ComposeHandle, volumes: bool) -> Result<(), ContainerError> {
+        self.engine.down(&[], false, volumes).await.map_err(Into::into)
+    }
 
-    let svc = engine.spec.services.get(&service).ok_or_else(|| format!("Service {} not found", service))?;
-    let container_name = perry_container_compose::service::service_container_name(svc, &service);
+    pub async fn ps(&self, _handle: &ComposeHandle) -> Result<Vec<ContainerInfo>, ContainerError> {
+        self.engine.ps().await.map_err(Into::into)
+    }
 
-    let logs = engine.backend.exec(&container_name, &cmd, env.as_ref(), workdir.as_deref()).await.map_err(|e| e.to_string())?;
-    Ok(ContainerLogs {
-        stdout: logs.stdout,
-        stderr: logs.stderr,
-    })
-}
+    pub async fn logs(&self, _handle: &ComposeHandle, service: Option<&str>, tail: Option<u32>) -> Result<ContainerLogs, ContainerError> {
+        let services = service.map(|s| vec![s.to_string()]).unwrap_or_default();
+        let logs_map = self.engine.logs(&services, tail).await.map_err(ContainerError::from)?;
 
-pub async fn compose_config(id: u64) -> Result<String, String> {
-    let engine = ComposeEngine::get_engine(id)
-        .ok_or_else(|| format!("Compose stack {} not found", id))?;
+        let mut stdout = String::new();
+        let mut stderr = String::new();
 
-    engine.config().map_err(|e| e.to_string())
-}
+        for (svc, logs) in logs_map {
+            stdout.push_str(&format!("[{}] {}\n", svc, logs));
+        }
 
-pub async fn compose_start(id: u64, services: Vec<String>) -> Result<(), String> {
-    let engine = ComposeEngine::get_engine(id)
-        .ok_or_else(|| format!("Compose stack {} not found", id))?;
+        Ok(ContainerLogs { stdout, stderr })
+    }
 
-    engine.start(&services).await.map_err(|e| e.to_string())
-}
-
-pub async fn compose_stop(id: u64, services: Vec<String>) -> Result<(), String> {
-    let engine = ComposeEngine::get_engine(id)
-        .ok_or_else(|| format!("Compose stack {} not found", id))?;
-
-    engine.stop(&services).await.map_err(|e| e.to_string())
-}
-
-pub async fn compose_restart(id: u64, services: Vec<String>) -> Result<(), String> {
-    let engine = ComposeEngine::get_engine(id)
-        .ok_or_else(|| format!("Compose stack {} not found", id))?;
-
-    engine.restart(&services).await.map_err(|e| e.to_string())
+    pub async fn exec(&self, _handle: &ComposeHandle, service: &str, cmd: &[String]) -> Result<ContainerLogs, ContainerError> {
+        self.engine.exec(service, cmd, None, None).await.map_err(Into::into)
+    }
 }

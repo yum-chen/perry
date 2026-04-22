@@ -92,3 +92,21 @@ pub fn get_chainguard_image(tool: &str) -> Option<String> {
 pub fn get_default_base_image() -> &'static str {
     "cgr.dev/chainguard/alpine-base"
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chainguard_image_lookup() {
+        assert_eq!(get_chainguard_image("git"), Some("cgr.dev/chainguard/git".to_string()));
+        assert_eq!(get_chainguard_image("rust"), Some("cgr.dev/chainguard/rust".to_string()));
+        assert_eq!(get_chainguard_image("unknown-tool"), None);
+    }
+
+    #[test]
+    fn test_base_image_defaults() {
+        assert!(get_default_base_image().contains("chainguard"));
+        assert!(get_static_base_image().contains("wolfi"));
+    }
+}
