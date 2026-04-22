@@ -1,150 +1,145 @@
-use std::collections::HashMap;
-use crate::error::Result;
+//! Service runtime state and name generation.
+
 use crate::backend::ContainerBackend;
-use crate::types::{ContainerInfo, ContainerSpec, ListOrDict};
+use crate::error::Result;
+use crate::types::{ComposeService, ContainerSpec};
 use md5::{Digest, Md5};
 
-/// Ported from internal/entities/service.go
-pub struct Service {
-    pub image: Option<String>,
-    pub name: Option<String>,           // container_name in YAML
-    pub ports: Option<Vec<String>>,
-    pub environment: Option<ListOrDict>,
-    pub labels: Option<ListOrDict>,
-    pub volumes: Option<Vec<String>>,
-    pub build: Option<ServiceBuild>,
+/// Generate a stable container name for a service.
+///
+/// Format: `{short_hash}{random_suffix_hex}`
+pub fn generate_name(_service_name: &str, image_name: &str) -> String {
+    let mut hasher = Md5::new();
+    hasher.update(image_name.as_bytes());
+    let hash = hasher.finalize();
+    let short_hash = &hex::encode(hash)[..8];
 
-    // Additional fields for full compose-spec support (Requirement 19.3)
-    pub command: Option<Vec<String>>,
-    pub entrypoint: Option<Vec<String>>,
-    pub env_file: Option<Vec<String>>,
-    pub networks: Option<Vec<String>>,
-    pub depends_on: Option<crate::types::DependsOnSpec>,
-    pub restart: Option<String>,
-    pub healthcheck: Option<crate::types::ComposeHealthcheck>,
-    pub working_dir: Option<String>,
-    pub user: Option<String>,
-    pub hostname: Option<String>,
-    pub privileged: Option<bool>,
-    pub read_only: Option<bool>,
-    pub stdin_open: Option<bool>,
-    pub tty: Option<bool>,
-    pub isolation_level: Option<crate::types::IsolationLevel>,
+    let random_suffix: u32 = rand::random();
+    format!("{}{:08x}", short_hash, random_suffix)
 }
 
-/// Ported from internal/entities/service.go
-pub struct ServiceBuild {
-    pub context: String,
-    pub dockerfile: Option<String>,
-    pub args: Option<HashMap<String, String>>,
-    pub labels: Option<ListOrDict>,
-    pub target: Option<String>,
-    pub network: Option<String>,
+/// Compute a short hash of the service configuration.
+pub fn service_config_hash(svc: &ComposeService) -> String {
+    let service_yaml = serde_yaml::to_string(svc).unwrap_or_default();
+    let mut hasher = Md5::new();
+    hasher.update(service_yaml.as_bytes());
+    hex::encode(hasher.finalize())[..8].to_string()
 }
 
-impl Service {
-    /// Ported from internal/entities/service.go (Requirement 19.2, 19.4)
-    pub fn generate_name(image: &str, service_name: &str) -> String {
-        let mut hasher = Md5::new();
-        hasher.update(image.as_bytes());
-        let hash = hex::encode(hasher.finalize());
-        let short_hash = &hash[..8];
+/// Service runtime state tracking.
+pub struct ServiceState {
+    /// Container ID
+    pub container_id: String,
+    /// Container name
+    pub container_name: String,
+    /// Whether the service container is running
+    pub running: bool,
+}
 
-        let random_suffix: u32 = rand::random();
-
-        format!("{}_{}_{}", service_name, short_hash, random_suffix)
-    }
-
-    pub fn container_name(&self, service_name: &str) -> String {
-        if let Some(name) = self.name.as_ref() {
-            return name.clone();
+impl ServiceState {
+    /// Create a service state from an explicit container name.
+    pub fn new(container_id: String, container_name: String, running: bool) -> Self {
+        ServiceState {
+            container_id,
+            container_name,
+            running,
         }
-        let image = self.image.as_deref().unwrap_or("unknown");
-        Self::generate_name(image, service_name)
+    }
+}
+
+/// Generate a container name for a service, using explicit name if set.
+pub fn service_container_name(svc: &ComposeService, service_name: &str) -> String {
+    if let Some(explicit) = svc.explicit_name() {
+        return explicit.to_string();
     }
 
-    /// Requirement 19.2: Ported from internal/entities/service.go
-    pub async fn exists(&self, service_name: &str, backend: &dyn ContainerBackend) -> Result<bool> {
-        match backend.inspect(&self.container_name(service_name)).await {
+    let image_name = svc.image.as_deref().unwrap_or(service_name);
+    generate_name(service_name, image_name)
+}
+
+impl ComposeService {
+    /// Check if the service's container exists.
+    pub async fn exists(&self, backend: &dyn ContainerBackend, service_name: &str) -> Result<bool> {
+        let name = service_container_name(self, service_name);
+        match backend.inspect(&name).await {
             Ok(_) => Ok(true),
             Err(crate::error::ComposeError::NotFound(_)) => Ok(false),
             Err(e) => Err(e),
         }
     }
 
-    /// Requirement 19.2: Ported from internal/entities/service.go
-    pub async fn is_running(&self, service_name: &str, backend: &dyn ContainerBackend) -> Result<bool> {
-        match backend.inspect(&self.container_name(service_name)).await {
-            Ok(info) => Ok(info.status.to_lowercase().contains("running")
-                || info.status.to_lowercase().contains("up")),
+    /// Check if the service's container is running.
+    pub async fn is_running(&self, backend: &dyn ContainerBackend, service_name: &str) -> Result<bool> {
+        let name = service_container_name(self, service_name);
+        match backend.inspect(&name).await {
+            Ok(info) => Ok(info.status == "running"),
             Err(crate::error::ComposeError::NotFound(_)) => Ok(false),
             Err(e) => Err(e),
         }
     }
 
-    /// Requirement 19.2: Ported from internal/entities/service.go
-    pub fn needs_build(&self) -> bool {
-        self.build.is_some() && self.image.is_none()
+    /// Run the command to create and start the service container.
+    pub async fn run_command(&self, backend: &dyn ContainerBackend, service_name: &str) -> Result<()> {
+        let name = service_container_name(self, service_name);
+        let spec = self.to_container_spec(service_name, Some(&name));
+        backend.run(&spec).await.map(|_| ())
     }
 
-    /// Requirement 19.2: Ported from internal/entities/service.go
-    pub async fn run_command(&self, service_name: &str, backend: &dyn ContainerBackend) -> Result<()> {
-        if self.needs_build() {
-            self.build_command(service_name, backend).await?;
-        }
-
-        let spec = ContainerSpec {
-            image: self.image.clone().unwrap_or_else(|| format!("{}_image", service_name)),
-            name: Some(self.container_name(service_name)),
-            ports: self.ports.clone(),
-            volumes: self.volumes.clone(),
-            env: self.environment.as_ref().map(|e| e.to_map()),
-            cmd: self.command.clone(),
-            entrypoint: self.entrypoint.clone(),
-            network: self.networks.as_ref().and_then(|n| n.first().cloned()),
-            rm: Some(false),
-        };
-
-        backend.run(&spec).await?;
-        Ok(())
+    /// Start the existing stopped service container.
+    pub async fn start_command(&self, backend: &dyn ContainerBackend, service_name: &str) -> Result<()> {
+        let name = service_container_name(self, service_name);
+        backend.start(&name).await
     }
 
-    /// Requirement 19.2: Ported from internal/entities/service.go
-    pub async fn start_command(&self, service_name: &str, backend: &dyn ContainerBackend) -> Result<()> {
-        backend.start(&self.container_name(service_name)).await
-    }
-
-    /// Requirement 19.2: Ported from internal/entities/service.go
-    pub async fn build_command(&self, service_name: &str, backend: &dyn ContainerBackend) -> Result<()> {
+    /// Build the image for the service if a build config is provided.
+    pub async fn build_command(&self, backend: &dyn ContainerBackend, service_name: &str) -> Result<()> {
         if let Some(build) = &self.build {
-            // Need a way to convert ServiceBuild to whatever backend.build takes
-            // Assuming we'll refactor backend.build too.
-            let image_name = self.image.clone().unwrap_or_else(|| format!("{}_image", service_name));
-
-            // Temporary mapping until backend is refactored
-            let build_spec = crate::types::ComposeServiceBuild {
-                context: Some(build.context.clone()),
-                dockerfile: build.dockerfile.clone(),
-                args: build.args.as_ref().map(|a| {
-                    let mut map = indexmap::IndexMap::new();
-                    for (k, v) in a {
-                        map.insert(k.clone(), Some(serde_yaml::Value::String(v.clone())));
-                    }
-                    crate::types::ListOrDict::Dict(map)
-                }),
-                labels: build.labels.clone(),
-                target: build.target.clone(),
-                network: build.network.clone(),
-                ..Default::default()
-            };
-
-            backend.build(&build_spec, &image_name).await?;
+            let image_name = self.image_ref(service_name);
+            backend.build(&build.as_build(), &image_name).await
+        } else {
+            Ok(())
         }
-        Ok(())
     }
 
-    /// Requirement 19.2: Ported from internal/entities/service.go
-    pub async fn inspect_command(&self, service_name: &str, backend: &dyn ContainerBackend) -> Result<ContainerInfo> {
-        backend.inspect(&self.container_name(service_name)).await
+    /// Create a `ContainerSpec` from this service definition.
+    pub fn to_container_spec(&self, service_name: &str, container_name: Option<&str>) -> ContainerSpec {
+        ContainerSpec {
+            image: self.image_ref(service_name),
+            name: container_name.map(String::from),
+            ports: Some(self.port_strings()),
+            volumes: Some(self.volume_strings()),
+            env: Some(self.resolved_env()),
+            cmd: self.command_list(),
+            entrypoint: self.entrypoint.as_ref().map(|e| match e {
+                serde_yaml::Value::String(s) => vec![s.clone()],
+                serde_yaml::Value::Sequence(seq) => seq.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+                _ => vec![],
+            }),
+            network: self.network_mode.clone(),
+            rm: Some(false),
+            read_only: self.read_only,
+            labels: self.labels.as_ref().map(|l| l.to_map()),
+            ..Default::default()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_name_format() {
+        let name = generate_name("web", "nginx");
+        // Format: {short_hash}{random_suffix_hex}
+        assert_eq!(name.len(), 8 + 8);
+    }
+
+    #[test]
+    fn test_explicit_name() {
+        let mut svc = ComposeService::default();
+        svc.container_name = Some("my-container".to_string());
+        let name = service_container_name(&svc, "web");
+        assert_eq!(name, "my-container");
     }
 }

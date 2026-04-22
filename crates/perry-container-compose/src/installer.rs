@@ -1,89 +1,118 @@
-use crate::backend::{detect_backend, BackendDriver};
+//! Interactive backend installer for perry-container-compose.
+
+use crate::backend::{detect_backend, ContainerBackend};
 use crate::error::{ComposeError, Result};
-use console::Term;
-use dialoguer::{theme::ColorfulTheme, Select};
-use std::process::Command;
+use std::sync::Arc;
+use console::{style, Term};
+use dialoguer::{theme::ColorfulTheme, Select, Confirm};
 
 pub struct BackendInstaller {
-    pub is_tty: bool,
+    pub no_prompt: bool,
+}
+
+struct InstallOption {
+    name: &'static str,
+    description: &'static str,
+    install_command: &'static str,
+    docs_url: &'static str,
 }
 
 impl BackendInstaller {
     pub fn new() -> Self {
-        Self {
-            is_tty: Term::stderr().is_term(),
-        }
+        let no_prompt = std::env::var("PERRY_NO_INSTALL_PROMPT").is_ok();
+        Self { no_prompt }
     }
 
-    pub async fn run(&self) -> Result<BackendDriver> {
-        if !self.is_tty {
-            return Err(ComposeError::NoBackendFound { probed: vec![] });
+    pub async fn run(&self) -> Result<Arc<dyn ContainerBackend + Send + Sync>> {
+        if self.no_prompt {
+            return Err(ComposeError::validation("No container backend found and PERRY_NO_INSTALL_PROMPT is set."));
         }
 
-        if let Ok(_) = std::env::var("PERRY_NO_INSTALL_PROMPT") {
-            return Err(ComposeError::NoBackendFound { probed: vec![] });
+        if !Term::stderr().is_term() {
+            return Err(ComposeError::validation("No container backend found and stderr is not a TTY."));
         }
 
-        println!("Perry needs a container runtime to continue. No container runtime was found on this system.");
+        println!("{}", style("Perry needs a container runtime to continue.").bold());
+        println!("No container runtime was found on this system.");
+        println!();
 
-        let backends = self.get_platforms_backends();
-        let items: Vec<String> = backends.iter().map(|(name, desc, _, _)| format!("{}: {}", name, desc)).collect();
+        let options = self.platform_options();
+        let items: Vec<String> = options.iter()
+            .map(|o| format!("{} - {}", style(o.name).bold(), o.description))
+            .collect();
 
         let selection = Select::with_theme(&ColorfulTheme::default())
             .with_prompt("Select a backend to install")
             .items(&items)
             .default(0)
-            .interact_opt()
-            .map_err(|e| ComposeError::ValidationError { message: e.to_string() })?;
+            .interact()
+            .map_err(|e| ComposeError::validation(format!("Selection failed: {}", e)))?;
 
-        if let Some(index) = selection {
-            let (name, _desc, cmd, docs) = backends[index];
-            println!("\nTo install {}, run:\n  {}\n\nDocs: {}\n", name, cmd, docs);
+        let choice = &options[selection];
 
-            let confirm = dialoguer::Confirm::new()
-                .with_prompt(format!("Run '{}' now?", cmd))
-                .interact()
-                .map_err(|e| ComposeError::ValidationError { message: e.to_string() })?;
+        println!();
+        println!("To install {}, run:", style(choice.name).cyan());
+        println!("  {}", style(choice.install_command).bold());
+        println!("Docs: {}", style(choice.docs_url).underlined());
+        println!();
 
-            if confirm {
-                println!("Running installation command...");
-                let status = if cfg!(target_os = "windows") {
-                    Command::new("powershell").args(&["-Command", cmd]).status()?
-                } else {
-                    Command::new("sh").args(&["-c", cmd]).status()?
-                };
+        if Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!("Run install command automatically?"))
+            .interact()
+            .unwrap_or(false)
+        {
+            self.execute_install(choice.install_command).await?;
 
-                if status.success() {
-                    println!("Installation completed. Re-probing...");
-                    return crate::backend::probe_candidate_driver(name).await.map_err(|_e| ComposeError::NoBackendFound { probed: vec![] });
-                } else {
-                    return Err(ComposeError::BackendError { code: status.code().unwrap_or(1), message: "Installation failed".into() });
-                }
+            println!("{}", style("Installation completed. Verifying...").green());
+            match detect_backend().await {
+                Ok(backend) => Ok(backend),
+                Err(_) => Err(ComposeError::validation("Installation finished but backend still not detected. Please install manually.")),
             }
+        } else {
+            Err(ComposeError::validation("Please install the container runtime and try again."))
         }
-
-        Err(ComposeError::NoBackendFound { probed: vec![] })
     }
 
-    fn get_platforms_backends(&self) -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
+    fn platform_options(&self) -> Vec<InstallOption> {
         if cfg!(target_os = "macos") {
             vec![
-                ("apple/container", "Apple's native container runtime", "brew install container", "https://github.com/apple/container"),
-                ("orbstack", "Fast macOS VM with Docker-compatible API", "brew install --cask orbstack", "https://orbstack.dev"),
-                ("colima", "Lightweight macOS container runtime", "brew install colima", "https://github.com/abiosoft/colima"),
-                ("podman", "Daemonless, rootless OCI runtime", "brew install podman && podman machine init && podman machine start", "https://podman.io"),
-                ("docker", "Docker Desktop for Mac", "brew install --cask docker", "https://docs.docker.com/desktop/mac"),
-            ]
-        } else if cfg!(target_os = "linux") {
-            vec![
-                ("podman", "Daemonless, rootless OCI runtime", "sudo apt-get install -y podman", "https://podman.io/getting-started/installation"),
-                ("docker", "Docker Engine", "curl -fsSL https://get.docker.com | sh", "https://docs.docker.com/engine/install"),
+                InstallOption {
+                    name: "apple/container",
+                    description: "Apple's native container runtime (recommended)",
+                    install_command: "brew install container",
+                    docs_url: "https://github.com/apple/container",
+                },
+                InstallOption {
+                    name: "podman",
+                    description: "Daemonless, rootless OCI runtime",
+                    install_command: "brew install podman && podman machine init && podman machine start",
+                    docs_url: "https://podman.io",
+                },
             ]
         } else {
             vec![
-                ("podman", "Daemonless, rootless OCI runtime", "winget install RedHat.Podman", "https://podman.io/getting-started/installation"),
-                ("docker", "Docker Desktop for Windows", "winget install Docker.DockerDesktop", "https://docs.docker.com/desktop/windows"),
+                InstallOption {
+                    name: "podman",
+                    description: "Daemonless, rootless OCI runtime (recommended)",
+                    install_command: "sudo apt-get install -y podman",
+                    docs_url: "https://podman.io/getting-started/installation",
+                },
             ]
+        }
+    }
+
+    async fn execute_install(&self, command: &str) -> Result<()> {
+        let status = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .status()
+            .await
+            .map_err(ComposeError::IoError)?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(ComposeError::validation(format!("Install command failed with status: {}", status)))
         }
     }
 }

@@ -4,4 +4,4 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 91f2ad37c4bc5905f27a74f65cca020276a2d62b5212d30b83119c670991301f # shrinks to (template, env) = ("prefix_${A0}_mid_${A_:-}_suffix", {"A0": "value1"})
+cc 01415cefbb25a2e9b99ee6a813e74f7192b130ffb81c7bd5e140f925b48f3eb0 # shrinks to spec = ContainerSpec { image: "a0", name: None, ports: None, volumes: None, env: None, cmd: None, entrypoint: None, network: None, rm: None, read_only: Some(true) }

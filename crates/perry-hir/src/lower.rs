@@ -2441,29 +2441,6 @@ fn lower_module_decl(
             // Check if this is a native module import
             let is_native = is_native_module(&source);
 
-            // Special handling for perry/container and perry/container-compose
-            if source == "perry/container" || source == "perry/container-compose" || source == "perry/compose" || source == "perry/workloads" {
-                let canonical_source = if source == "perry/compose" {
-                    "perry/container-compose".to_string()
-                } else {
-                    source.clone()
-                };
-                for spec in &import_decl.specifiers {
-                    if let ast::ImportSpecifier::Named(named) = spec {
-                        let local = named.local.sym.to_string();
-                        let imported = named.imported
-                            .as_ref()
-                            .map(|i| match i {
-                                ast::ModuleExportName::Ident(id) => id.sym.to_string(),
-                                ast::ModuleExportName::Str(s) => s.value.as_str().unwrap_or("").to_string(),
-                            })
-                            .unwrap_or_else(|| local.clone());
-                        ctx.register_native_module(local, canonical_source.clone(), Some(imported));
-                    }
-                }
-                return Ok(());
-            }
-
             // Parse import specifiers
             let mut specifiers = Vec::new();
             for spec in &import_decl.specifiers {
@@ -2480,9 +2457,48 @@ fn lower_module_decl(
                             })
                             .unwrap_or_else(|| local.clone());
                         if is_native {
-                            // Register as native module function with the original method name
-                            // e.g., import { v4 as uuid } from 'uuid' -> uuid maps to uuid.v4
-                            ctx.register_native_module(local.clone(), source.clone(), Some(imported.clone()));
+                            // Map perry/container and perry/compose imports to their FFI symbols
+                            let ffi_name = match source.as_str() {
+                                "perry/container" => match imported.as_str() {
+                                    "run" => Some("js_container_run"),
+                                    "create" => Some("js_container_create"),
+                                    "start" => Some("js_container_start"),
+                                    "stop" => Some("js_container_stop"),
+                                    "remove" => Some("js_container_remove"),
+                                    "list" => Some("js_container_list"),
+                                    "inspect" => Some("js_container_inspect"),
+                                    "logs" => Some("js_container_logs"),
+                                    "exec" => Some("js_container_exec"),
+                                    "pullImage" => Some("js_container_pullImage"),
+                                    "listImages" => Some("js_container_listImages"),
+                                    "removeImage" => Some("js_container_removeImage"),
+                                    "getBackend" => Some("js_container_getBackend"),
+                                    "composeUp" => Some("js_container_composeUp"),
+                                    _ => None,
+                                },
+                                "perry/compose" => match imported.as_str() {
+                                    "up" => Some("js_compose_up"),
+                                    "down" => Some("js_compose_down"),
+                                    "ps" => Some("js_compose_ps"),
+                                    "logs" => Some("js_compose_logs"),
+                                    "exec" => Some("js_compose_exec"),
+                                    "config" => Some("js_compose_config"),
+                                    "start" => Some("js_compose_start"),
+                                    "stop" => Some("js_compose_stop"),
+                                    "restart" => Some("js_compose_restart"),
+                                    _ => None,
+                                },
+                                _ => None,
+                            };
+
+                            if let Some(ffi) = ffi_name {
+                                ctx.register_imported_func(local.clone(), ffi.to_string());
+                            } else {
+                                // Register as native module function with the original method name
+                                // e.g., import { v4 as uuid } from 'uuid' -> uuid maps to uuid.v4
+                                ctx.register_native_module(local.clone(), source.clone(), Some(imported.clone()));
+                            }
+
                             // Auto-register parentPort from worker_threads as a native instance
                             // (it's a singleton, not created via `new`)
                             if source == "worker_threads" && imported == "parentPort" {
@@ -4630,6 +4646,17 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
             } else if let Some(id) = ctx.lookup_func(&name) {
                 Ok(Expr::FuncRef(id))
             } else if let Some((module_name, method_name)) = ctx.lookup_native_module(&name) {
+                // Feature: perry-container | Layer: HIR | Req: 1.1, 11.2
+                // Special handling for container and compose named imports
+                if module_name == "perry/container" || module_name == "perry/compose" || module_name == "perry/container-compose" {
+                    if let Some(method) = method_name {
+                        return Ok(Expr::ExternFuncRef {
+                            name: method.to_string(),
+                            param_types: Vec::new(),
+                            return_type: Type::Any,
+                        });
+                    }
+                }
                 // Special handling for worker_threads named imports
                 if module_name == "worker_threads" {
                     if let Some(method) = method_name {
@@ -4927,6 +4954,23 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                 }
             }
 
+            // perry/ui reactive Text: `Text(\`...${state.value}...\`)` where at least one
+            // interpolation is `<ident>.value` on a State binding. Desugars to
+            // `{ __h = Text(concat); stateOnChange(state, v => textSetString(__h, concat)); __h }`
+            // so the label updates when state.set(...) fires subscribers. Closes #104.
+            if let Some(desugared) = try_desugar_reactive_text(ctx, call)? {
+                return Ok(desugared);
+            }
+
+            // perry/ui reactive animation: `widget.animateOpacity(<expr reading
+            // state.value>, dur)` or `.animatePosition(...)` desugars to an IIFE
+            // that runs the initial animation and registers a `stateOnChange`
+            // subscriber per referenced State so the animation re-fires when
+            // any read state changes. Closes the follow-up to #109.
+            if let Some(desugared) = try_desugar_reactive_animate(ctx, call)? {
+                return Ok(desugared);
+            }
+
             let mut args = call.args.iter()
                 .map(|arg| lower_expr(ctx, &arg.expr))
                 .collect::<Result<Vec<_>>>()?;
@@ -5097,6 +5141,21 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                                                     signal,
                                                 });
                                             }
+                                        }
+                                        "exit" => {
+                                            // process.exit() / process.exit(code) — never
+                                            // returns, terminates the process. Until now this
+                                            // fell through to generic NativeMethodCall which
+                                            // silently no-op'd, so scripts that rely on it to
+                                            // end the event loop (e.g. `main().then(() =>
+                                            // process.exit(0))` in a net-socket driver) would
+                                            // hang with the socket still keeping the loop alive.
+                                            let code = if args.len() >= 1 {
+                                                Some(Box::new(args.into_iter().next().unwrap()))
+                                            } else {
+                                                None
+                                            };
+                                            return Ok(Expr::ProcessExit(code));
                                         }
                                         _ => {} // Fall through to generic handling
                                     }
@@ -5498,9 +5557,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                                     || module_name == "fs" || module_name == "node:fs"
                                     || module_name == "child_process" || module_name == "node:child_process"
                                     || module_name == "crypto" || module_name == "node:crypto"
-                                    || module_name == "os" || module_name == "node:os"
-                                    || module_name == "perry/container"
-                                    || module_name == "perry/container-compose";
+                                    || module_name == "os" || module_name == "node:os";
                                 if !is_handled_module {
                                     // This is a call on a native module (e.g., mysql.createConnection)
                                     if let ast::MemberProp::Ident(method_ident) = &member.prop {
@@ -5997,6 +6054,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                                         "asinh" => { if args.len() >= 1 { return Ok(Expr::MathAsinh(Box::new(args.into_iter().next().unwrap()))); } }
                                         "acosh" => { if args.len() >= 1 { return Ok(Expr::MathAcosh(Box::new(args.into_iter().next().unwrap()))); } }
                                         "atanh" => { if args.len() >= 1 { return Ok(Expr::MathAtanh(Box::new(args.into_iter().next().unwrap()))); } }
+                                        "exp" => { if args.len() >= 1 { return Ok(Expr::MathExp(Box::new(args.into_iter().next().unwrap()))); } }
                                         _ => {} // Fall through to generic handling
                                     }
                                 }
@@ -6745,17 +6803,38 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                                     match method_name {
                                         "push" => {
                                             if args.len() >= 1 {
-                                                // Check if the argument has spread operator
-                                                if call.args.len() >= 1 && call.args[0].spread.is_some() {
-                                                    return Ok(Expr::ArrayPushSpread {
-                                                        array_id,
-                                                        source: Box::new(args.into_iter().next().unwrap()),
-                                                    });
+                                                // Check if any argument has spread operator —
+                                                // when present, route through the spread path.
+                                                // Multi-arg push without spread is desugared to a
+                                                // Sequence of ArrayPush statements (one per arg);
+                                                // JS spec returns the final array length, which is
+                                                // exactly what the last ArrayPush returns.
+                                                let any_spread = call.args.iter().any(|a| a.spread.is_some());
+                                                if any_spread {
+                                                    if args.len() == 1 {
+                                                        return Ok(Expr::ArrayPushSpread {
+                                                            array_id,
+                                                            source: Box::new(args.into_iter().next().unwrap()),
+                                                        });
+                                                    }
+                                                    // Mixed regular + spread: bail to generic
+                                                    // dispatch (no current single-IR-shape).
+                                                } else {
+                                                    if args.len() == 1 {
+                                                        return Ok(Expr::ArrayPush {
+                                                            array_id,
+                                                            value: Box::new(args.into_iter().next().unwrap()),
+                                                        });
+                                                    }
+                                                    let mut stmts: Vec<Expr> = Vec::with_capacity(args.len());
+                                                    for a in args.into_iter() {
+                                                        stmts.push(Expr::ArrayPush {
+                                                            array_id,
+                                                            value: Box::new(a),
+                                                        });
+                                                    }
+                                                    return Ok(Expr::Sequence(stmts));
                                                 }
-                                                return Ok(Expr::ArrayPush {
-                                                    array_id,
-                                                    value: Box::new(args.into_iter().next().unwrap()),
-                                                });
                                             }
                                         }
                                         "pop" => {
@@ -8762,6 +8841,66 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                             "stdin" => return Ok(Expr::ProcessStdin),
                             "stdout" => return Ok(Expr::ProcessStdout),
                             "stderr" => return Ok(Expr::ProcessStderr),
+                            "env" => return Ok(Expr::ProcessEnv),
+                            _ => {}
+                        }
+                    }
+                }
+                // `globalThis.process` returns an object whose `.env`/`.argv`/
+                // etc. should resolve just like bare `process.*`. Without this
+                // shim, `globalThis.process.env` walks through generic
+                // PropertyGet dispatch and hits a 0.0 sentinel. Matches the
+                // static `process.env` fast path above.
+                if obj_ident.sym.as_ref() == "globalThis" {
+                    if let ast::MemberProp::Ident(prop_ident) = &member.prop {
+                        if prop_ident.sym.as_ref() == "process" {
+                            // `globalThis.process` on its own — fall through
+                            // to generic handling below (returns 0.0 sentinel,
+                            // which is fine as the outer chain handles env/etc.).
+                        }
+                    }
+                }
+            }
+            // Handle `globalThis.process.X` (and any PropertyGet whose object
+            // resolves to `globalThis.process`): treat the outer `.X` as if
+            // it were a bare `process.X` access. Unwraps transparent TS
+            // wrappers (TsAs, TsNonNull, TsSatisfies, TsTypeAssertion, Paren)
+            // so that `(globalThis as any).process.env` works too.
+            fn unwrap_transparent(e: &ast::Expr) -> &ast::Expr {
+                let mut cur = e;
+                loop {
+                    match cur {
+                        ast::Expr::TsAs(x) => cur = &x.expr,
+                        ast::Expr::TsNonNull(x) => cur = &x.expr,
+                        ast::Expr::TsSatisfies(x) => cur = &x.expr,
+                        ast::Expr::TsTypeAssertion(x) => cur = &x.expr,
+                        ast::Expr::TsConstAssertion(x) => cur = &x.expr,
+                        ast::Expr::Paren(x) => cur = &x.expr,
+                        _ => return cur,
+                    }
+                }
+            }
+            let member_obj_unwrapped = unwrap_transparent(member.obj.as_ref());
+            if let ast::Expr::Member(inner) = member_obj_unwrapped {
+                let inner_obj_unwrapped = unwrap_transparent(inner.obj.as_ref());
+                let inner_is_global_process = matches!(
+                    inner_obj_unwrapped,
+                    ast::Expr::Ident(i) if i.sym.as_ref() == "globalThis"
+                ) && matches!(
+                    &inner.prop,
+                    ast::MemberProp::Ident(p) if p.sym.as_ref() == "process"
+                );
+                if inner_is_global_process {
+                    if let ast::MemberProp::Ident(prop_ident) = &member.prop {
+                        match prop_ident.sym.as_ref() {
+                            "argv" => return Ok(Expr::ProcessArgv),
+                            "platform" => return Ok(Expr::OsPlatform),
+                            "arch" => return Ok(Expr::OsArch),
+                            "pid" => return Ok(Expr::ProcessPid),
+                            "ppid" => return Ok(Expr::ProcessPpid),
+                            "version" => return Ok(Expr::ProcessVersion),
+                            "versions" => return Ok(Expr::ProcessVersions),
+                            "env" => return Ok(Expr::ProcessEnv),
                             _ => {}
                         }
                     }
@@ -10497,10 +10636,16 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                 ast::SuperProp::Ident(_ident) => {
                     // This is typically used in Call expressions like super.method()
                     // We return a placeholder that will be handled specially
-                    Err(anyhow!("Direct super property access not yet supported, use super.method()"))
+                    crate::lower_bail!(
+                        super_prop.span,
+                        "Direct super property access not yet supported, use super.method()"
+                    );
                 }
                 ast::SuperProp::Computed(_) => {
-                    Err(anyhow!("Computed super property access not supported"))
+                    crate::lower_bail!(
+                        super_prop.span,
+                        "Computed super property access not supported"
+                    );
                 }
             }
         }
@@ -10939,6 +11084,503 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
 
 /// Unescape template literal strings (handle \n, \t, etc.)
 fn _unescape_template() {}
+
+/// Lower a template literal AST node to its desugared string-concat HIR
+/// expression: `\`pre${x}post\`` → `Expr::Binary(Add, "pre", x) + "post"`.
+/// Mirrors the inline Tpl lowering at `ast::Expr::Tpl` — extracted so the
+/// reactive-Text desugaring can re-lower the same template twice (once for
+/// the initial widget value, once inside the rebuild closure).
+fn lower_tpl_to_concat(ctx: &mut LoweringContext, tpl: &ast::Tpl) -> Result<Expr> {
+    if tpl.quasis.is_empty() {
+        return Ok(Expr::String(String::new()));
+    }
+    let first_raw = tpl.quasis.first().map(|q| q.raw.as_ref()).unwrap_or("");
+    let mut result = Expr::String(unescape_template(first_raw));
+    for (i, expr) in tpl.exprs.iter().enumerate() {
+        let lowered = lower_expr(ctx, expr)?;
+        result = Expr::Binary {
+            op: BinaryOp::Add,
+            left: Box::new(result),
+            right: Box::new(lowered),
+        };
+        if let Some(quasi) = tpl.quasis.get(i + 1) {
+            let quasi_str: &str = quasi.raw.as_ref();
+            if !quasi_str.is_empty() {
+                result = Expr::Binary {
+                    op: BinaryOp::Add,
+                    left: Box::new(result),
+                    right: Box::new(Expr::String(unescape_template(quasi_str))),
+                };
+            }
+        }
+    }
+    Ok(result)
+}
+
+/// If `call` matches `Text(\`...${state.value}...\`)` with at least one State
+/// interpolation, desugar into an auto-reactive binding. Returns `Ok(None)`
+/// for anything else so the generic Call lowering runs.
+///
+/// The promise (docs/src/ui/state.md): *"Perry detects `state.value` reads
+/// inside template literals and creates reactive bindings."* Prior to this,
+/// the detection existed nowhere and `count.set(...)` didn't update the
+/// rendered label on any platform — most visibly on web/wasm (issue #104)
+/// where users ran the counter example and saw static text.
+///
+/// Generated HIR shape:
+/// ```text
+/// Sequence([
+///   LocalSet(__h, Text(initial_concat)),
+///   stateOnChange(state1, closure((_v) -> textSetString(__h, fresh_concat))),
+///   stateOnChange(state2, closure((_v) -> textSetString(__h, fresh_concat))),
+///   ...,
+///   LocalGet(__h),
+/// ])
+/// ```
+///
+/// The concat is re-lowered for each closure so each subscriber reads every
+/// state freshly — correct for `Text(\`${a.value} and ${b.value}\`)` where a
+/// change to `a` still needs the current value of `b`.
+fn try_desugar_reactive_text(
+    ctx: &mut LoweringContext,
+    call: &ast::CallExpr,
+) -> Result<Option<Expr>> {
+    // Callee must be the bare identifier `Text`.
+    let ast::Callee::Expr(callee_expr) = &call.callee else {
+        return Ok(None);
+    };
+    let ast::Expr::Ident(ident) = callee_expr.as_ref() else {
+        return Ok(None);
+    };
+    if ident.sym.as_ref() != "Text" {
+        return Ok(None);
+    }
+    // `Text` must resolve to `perry/ui`'s Text import. Rejects a user-defined
+    // `function Text(...)` or an import from another module.
+    match ctx.lookup_native_module("Text") {
+        Some(("perry/ui", Some(m))) if m == "Text" => {}
+        _ => return Ok(None),
+    }
+    // Only the 1-arg positional form. Spread or additional config args fall
+    // through — avoids clobbering setter-chained call forms that we haven't
+    // proven we can reproduce bit-for-bit.
+    if call.args.iter().any(|a| a.spread.is_some()) {
+        return Ok(None);
+    }
+    if call.args.len() != 1 {
+        return Ok(None);
+    }
+    let ast::Expr::Tpl(tpl) = call.args[0].expr.as_ref() else {
+        return Ok(None);
+    };
+
+    // Collect unique `<ident>.value` interpolations where `<ident>` is a
+    // State binding. De-dup by name so two references to the same state
+    // only register one subscriber.
+    let mut state_names: Vec<String> = Vec::new();
+    for expr in tpl.exprs.iter() {
+        let ast::Expr::Member(member) = expr.as_ref() else { continue };
+        let ast::MemberProp::Ident(prop) = &member.prop else { continue };
+        if prop.sym.as_ref() != "value" { continue }
+        let ast::Expr::Ident(obj_ident) = member.obj.as_ref() else { continue };
+        let name = obj_ident.sym.to_string();
+        let is_state = matches!(
+            ctx.lookup_native_instance(&name),
+            Some(("perry/ui", "State"))
+        );
+        if is_state && !state_names.contains(&name) {
+            state_names.push(name);
+        }
+    }
+    if state_names.is_empty() {
+        return Ok(None);
+    }
+
+    // Emit as an IIFE closure so the widget handle can be a *real* function
+    // local (backed by a WASM local or LLVM alloca) rather than a bare LocalId
+    // floating inside an Expr::Sequence. The WASM backend only registers
+    // locals via `Stmt::Let`; a LocalSet/LocalGet pair with no backing Let
+    // falls through to TAG_UNDEFINED at read time, which silently drops the
+    // widget from its parent container.
+    //
+    //   (() => {
+    //     const __h = Text(concat);
+    //     stateOnChange(state1, (__v) => textSetString(__h, concat));
+    //     ...
+    //     return __h;
+    //   })()
+    let outer_func_id = ctx.fresh_func();
+    let outer_scope = ctx.enter_scope();
+    let widget_id = ctx.define_local("__perry_reactive_text_h".to_string(), Type::Any);
+
+    let initial_concat = lower_tpl_to_concat(ctx, tpl)?;
+    let text_call = Expr::NativeMethodCall {
+        module: "perry/ui".to_string(),
+        method: "Text".to_string(),
+        object: None,
+        args: vec![initial_concat],
+        class_name: None,
+    };
+
+    let mut outer_body: Vec<Stmt> = Vec::new();
+    outer_body.push(Stmt::Let {
+        id: widget_id,
+        name: "__perry_reactive_text_h".to_string(),
+        ty: Type::Any,
+        mutable: false,
+        init: Some(text_call),
+    });
+
+    for state_name in &state_names {
+        let state_local = ctx.lookup_local(state_name)
+            .ok_or_else(|| anyhow!("reactive Text: state '{}' not in scope", state_name))?;
+
+        // Inner rebuild closure: (__v) => textSetString(__h, <fresh concat>).
+        // A fresh concat is required because the callback reads the *current*
+        // state values at fire-time — re-using `initial_concat` would bind to
+        // the HIR tree already consumed by the Let above.
+        let inner_func_id = ctx.fresh_func();
+        let inner_scope = ctx.enter_scope();
+        let v_param_id = ctx.define_local("__v".to_string(), Type::Any);
+        let v_param = Param {
+            id: v_param_id,
+            name: "__v".to_string(),
+            ty: Type::Any,
+            default: None,
+            is_rest: false,
+        };
+        let fresh_concat = lower_tpl_to_concat(ctx, tpl)?;
+        let set_text_call = Expr::NativeMethodCall {
+            module: "perry/ui".to_string(),
+            method: "textSetString".to_string(),
+            object: None,
+            args: vec![
+                Expr::LocalGet(widget_id),
+                fresh_concat,
+            ],
+            class_name: None,
+        };
+        let inner_body = vec![Stmt::Expr(set_text_call)];
+        ctx.exit_scope(inner_scope);
+
+        let mut inner_refs = Vec::new();
+        let mut inner_visited = std::collections::HashSet::new();
+        for stmt in &inner_body {
+            collect_local_refs_stmt(stmt, &mut inner_refs, &mut inner_visited);
+        }
+        let mut inner_captures: Vec<LocalId> = inner_refs.into_iter()
+            .filter(|id| *id != v_param_id)
+            .collect();
+        inner_captures.sort();
+        inner_captures.dedup();
+        inner_captures = ctx.filter_module_level_captures(inner_captures);
+
+        let inner_closure = Expr::Closure {
+            func_id: inner_func_id,
+            params: vec![v_param],
+            return_type: Type::Any,
+            body: inner_body,
+            captures: inner_captures,
+            mutable_captures: Vec::new(),
+            captures_this: false,
+            enclosing_class: None,
+            is_async: false,
+        };
+
+        outer_body.push(Stmt::Expr(Expr::NativeMethodCall {
+            module: "perry/ui".to_string(),
+            method: "stateOnChange".to_string(),
+            object: None,
+            args: vec![Expr::LocalGet(state_local), inner_closure],
+            class_name: None,
+        }));
+    }
+
+    outer_body.push(Stmt::Return(Some(Expr::LocalGet(widget_id))));
+    ctx.exit_scope(outer_scope);
+
+    let mut outer_refs = Vec::new();
+    let mut outer_visited = std::collections::HashSet::new();
+    for stmt in &outer_body {
+        collect_local_refs_stmt(stmt, &mut outer_refs, &mut outer_visited);
+    }
+    let mut outer_captures: Vec<LocalId> = outer_refs.into_iter()
+        .filter(|id| *id != widget_id)
+        .collect();
+    outer_captures.sort();
+    outer_captures.dedup();
+    outer_captures = ctx.filter_module_level_captures(outer_captures);
+
+    let outer_closure = Expr::Closure {
+        func_id: outer_func_id,
+        params: vec![],
+        return_type: Type::Any,
+        body: outer_body,
+        captures: outer_captures,
+        mutable_captures: Vec::new(),
+        captures_this: false,
+        enclosing_class: None,
+        is_async: false,
+    };
+
+    Ok(Some(Expr::Call {
+        callee: Box::new(outer_closure),
+        args: vec![],
+        type_args: vec![],
+    }))
+}
+
+/// Walk an AST expression and collect identifiers used as `<ident>.value`
+/// where `<ident>` resolves to a `perry/ui` State native instance. Callers
+/// use the collected names to register `stateOnChange` subscribers.
+///
+/// Covers the expression shapes most commonly found in animation arguments:
+/// ternaries, binary/logical ops, parens, template literals, unary,
+/// assignment RHS, call args, array/object literals, and member reads. The
+/// catch-all silently skips unhandled shapes — worst case, a state read
+/// inside an exotic expression just won't trigger reactivity (same
+/// conservative failure mode as #104's template walker).
+fn collect_state_value_reads(ctx: &LoweringContext, expr: &ast::Expr, out: &mut Vec<String>) {
+    match expr {
+        ast::Expr::Member(member) => {
+            // `<ident>.value` where ident is a registered State.
+            if let ast::MemberProp::Ident(prop) = &member.prop {
+                if prop.sym.as_ref() == "value" {
+                    if let ast::Expr::Ident(obj) = member.obj.as_ref() {
+                        let name = obj.sym.to_string();
+                        if matches!(
+                            ctx.lookup_native_instance(&name),
+                            Some(("perry/ui", "State"))
+                        ) && !out.contains(&name)
+                        {
+                            out.push(name);
+                            return;
+                        }
+                    }
+                }
+            }
+            collect_state_value_reads(ctx, member.obj.as_ref(), out);
+        }
+        ast::Expr::Paren(p) => collect_state_value_reads(ctx, &p.expr, out),
+        ast::Expr::Cond(c) => {
+            collect_state_value_reads(ctx, &c.test, out);
+            collect_state_value_reads(ctx, &c.cons, out);
+            collect_state_value_reads(ctx, &c.alt, out);
+        }
+        ast::Expr::Bin(b) => {
+            collect_state_value_reads(ctx, &b.left, out);
+            collect_state_value_reads(ctx, &b.right, out);
+        }
+        ast::Expr::Unary(u) => collect_state_value_reads(ctx, &u.arg, out),
+        ast::Expr::Tpl(t) => {
+            for e in &t.exprs {
+                collect_state_value_reads(ctx, e, out);
+            }
+        }
+        ast::Expr::Call(c) => {
+            if let ast::Callee::Expr(ce) = &c.callee {
+                collect_state_value_reads(ctx, ce, out);
+            }
+            for a in &c.args {
+                collect_state_value_reads(ctx, &a.expr, out);
+            }
+        }
+        ast::Expr::Array(a) => {
+            for el in a.elems.iter().flatten() {
+                collect_state_value_reads(ctx, &el.expr, out);
+            }
+        }
+        ast::Expr::Seq(s) => {
+            for e in &s.exprs {
+                collect_state_value_reads(ctx, e, out);
+            }
+        }
+        ast::Expr::TsNonNull(n) => collect_state_value_reads(ctx, &n.expr, out),
+        ast::Expr::TsAs(a) => collect_state_value_reads(ctx, &a.expr, out),
+        ast::Expr::TsTypeAssertion(a) => collect_state_value_reads(ctx, &a.expr, out),
+        _ => {}
+    }
+}
+
+/// Desugar `widget.animateOpacity(<expr>, dur)` / `.animatePosition(...)`
+/// into an IIFE that runs the initial animation and registers a
+/// `stateOnChange` subscriber per `State` read in the args, so toggling the
+/// state re-fires the animation.
+///
+/// Generated HIR shape (animateOpacity with one state dependency):
+/// ```text
+/// (() => {
+///     const __h = <widget>;
+///     widgetAnimateOpacity(__h, target, dur);       // initial
+///     stateOnChange(state1, (__v) => widgetAnimateOpacity(__h, fresh_target, dur));
+///     return undefined;
+/// })()
+/// ```
+///
+/// Like the reactive-Text desugar (#104), the target expression is re-lowered
+/// for the subscriber body so it reads the *current* state value at fire time.
+fn try_desugar_reactive_animate(
+    ctx: &mut LoweringContext,
+    call: &ast::CallExpr,
+) -> Result<Option<Expr>> {
+    let ast::Callee::Expr(callee_expr) = &call.callee else {
+        return Ok(None);
+    };
+    let ast::Expr::Member(member) = callee_expr.as_ref() else {
+        return Ok(None);
+    };
+    let ast::MemberProp::Ident(prop) = &member.prop else {
+        return Ok(None);
+    };
+    let (method_name, expected_arity) = match prop.sym.as_ref() {
+        "animateOpacity" => ("widgetAnimateOpacity", 2),
+        "animatePosition" => ("widgetAnimatePosition", 3),
+        _ => return Ok(None),
+    };
+    if call.args.iter().any(|a| a.spread.is_some()) {
+        return Ok(None);
+    }
+    if call.args.len() != expected_arity {
+        return Ok(None);
+    }
+
+    // Collect unique state names whose `.value` is read anywhere in the args.
+    // Preserving insertion order keeps subscriber registration deterministic.
+    let mut state_names: Vec<String> = Vec::new();
+    for arg in &call.args {
+        collect_state_value_reads(ctx, &arg.expr, &mut state_names);
+    }
+    if state_names.is_empty() {
+        return Ok(None);
+    }
+
+    // Lower the receiver once; store in an IIFE local so the initial call and
+    // every subscriber share the same widget handle without re-evaluating
+    // side-effectful receiver expressions.
+    let widget_expr = lower_expr(ctx, member.obj.as_ref())?;
+
+    let outer_func_id = ctx.fresh_func();
+    let outer_scope = ctx.enter_scope();
+    let widget_id = ctx.define_local("__perry_anim_widget".to_string(), Type::Any);
+
+    let mut outer_body: Vec<Stmt> = Vec::new();
+    outer_body.push(Stmt::Let {
+        id: widget_id,
+        name: "__perry_anim_widget".to_string(),
+        ty: Type::Any,
+        mutable: false,
+        init: Some(widget_expr),
+    });
+
+    let mut initial_args: Vec<Expr> = Vec::with_capacity(expected_arity + 1);
+    initial_args.push(Expr::LocalGet(widget_id));
+    for a in &call.args {
+        initial_args.push(lower_expr(ctx, &a.expr)?);
+    }
+    outer_body.push(Stmt::Expr(Expr::NativeMethodCall {
+        module: "perry/ui".to_string(),
+        method: method_name.to_string(),
+        object: None,
+        args: initial_args,
+        class_name: None,
+    }));
+
+    for state_name in &state_names {
+        let state_local = ctx.lookup_local(state_name)
+            .ok_or_else(|| anyhow!("reactive animate: state '{}' not in scope", state_name))?;
+
+        let inner_func_id = ctx.fresh_func();
+        let inner_scope = ctx.enter_scope();
+        let v_param_id = ctx.define_local("__v".to_string(), Type::Any);
+        let v_param = Param {
+            id: v_param_id,
+            name: "__v".to_string(),
+            ty: Type::Any,
+            default: None,
+            is_rest: false,
+        };
+
+        let mut fresh_args: Vec<Expr> = Vec::with_capacity(expected_arity + 1);
+        fresh_args.push(Expr::LocalGet(widget_id));
+        for a in &call.args {
+            fresh_args.push(lower_expr(ctx, &a.expr)?);
+        }
+        let animate_call = Expr::NativeMethodCall {
+            module: "perry/ui".to_string(),
+            method: method_name.to_string(),
+            object: None,
+            args: fresh_args,
+            class_name: None,
+        };
+        let inner_body = vec![Stmt::Expr(animate_call)];
+        ctx.exit_scope(inner_scope);
+
+        let mut inner_refs = Vec::new();
+        let mut inner_visited = std::collections::HashSet::new();
+        for stmt in &inner_body {
+            collect_local_refs_stmt(stmt, &mut inner_refs, &mut inner_visited);
+        }
+        let mut inner_captures: Vec<LocalId> = inner_refs.into_iter()
+            .filter(|id| *id != v_param_id)
+            .collect();
+        inner_captures.sort();
+        inner_captures.dedup();
+        inner_captures = ctx.filter_module_level_captures(inner_captures);
+
+        let inner_closure = Expr::Closure {
+            func_id: inner_func_id,
+            params: vec![v_param],
+            return_type: Type::Any,
+            body: inner_body,
+            captures: inner_captures,
+            mutable_captures: Vec::new(),
+            captures_this: false,
+            enclosing_class: None,
+            is_async: false,
+        };
+
+        outer_body.push(Stmt::Expr(Expr::NativeMethodCall {
+            module: "perry/ui".to_string(),
+            method: "stateOnChange".to_string(),
+            object: None,
+            args: vec![Expr::LocalGet(state_local), inner_closure],
+            class_name: None,
+        }));
+    }
+
+    outer_body.push(Stmt::Return(Some(Expr::Undefined)));
+    ctx.exit_scope(outer_scope);
+
+    let mut outer_refs = Vec::new();
+    let mut outer_visited = std::collections::HashSet::new();
+    for stmt in &outer_body {
+        collect_local_refs_stmt(stmt, &mut outer_refs, &mut outer_visited);
+    }
+    let mut outer_captures: Vec<LocalId> = outer_refs.into_iter()
+        .filter(|id| *id != widget_id)
+        .collect();
+    outer_captures.sort();
+    outer_captures.dedup();
+    outer_captures = ctx.filter_module_level_captures(outer_captures);
+
+    let outer_closure = Expr::Closure {
+        func_id: outer_func_id,
+        params: vec![],
+        return_type: Type::Any,
+        body: outer_body,
+        captures: outer_captures,
+        mutable_captures: Vec::new(),
+        captures_this: false,
+        enclosing_class: None,
+        is_async: false,
+    };
+
+    Ok(Some(Expr::Call {
+        callee: Box::new(outer_closure),
+        args: vec![],
+        type_args: vec![],
+    }))
+}
 
 /// Try to lower a Widget({...}) call from perry/widget into a WidgetDecl.
 /// Returns Some(WidgetDecl) if this is a widget declaration, None otherwise.

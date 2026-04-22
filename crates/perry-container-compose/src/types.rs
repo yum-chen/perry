@@ -1,8 +1,11 @@
-//! All compose-spec and container Rust types.
+//! All compose-spec Rust types.
+//!
+//! This module contains every struct and enum needed to represent a
+//! compose-spec YAML document, plus the opaque `ComposeHandle` returned by
+//! `ComposeEngine::up()`.
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Convert a `serde_yaml::Value` to a string representation.
 fn yaml_value_to_str(v: &serde_yaml::Value) -> String {
@@ -19,7 +22,7 @@ fn yaml_value_to_str(v: &serde_yaml::Value) -> String {
 
 /// compose-spec `list_or_dict` pattern.
 /// Used for environment, labels, extra_hosts, sysctls, etc.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ListOrDict {
     Dict(IndexMap<String, Option<serde_yaml::Value>>),
@@ -28,7 +31,8 @@ pub enum ListOrDict {
 
 impl ListOrDict {
     /// Convert to a flat `HashMap<String, String>`.
-    pub fn to_map(&self) -> HashMap<String, String> {
+    /// Dict values are stringified; List entries are split on `=`.
+    pub fn to_map(&self) -> std::collections::HashMap<String, String> {
         match self {
             ListOrDict::Dict(map) => map
                 .iter()
@@ -38,7 +42,12 @@ impl ListOrDict {
                         Some(serde_yaml::Value::Number(n)) => n.to_string(),
                         Some(serde_yaml::Value::Bool(b)) => b.to_string(),
                         Some(serde_yaml::Value::Null) | None => String::new(),
-                        Some(other) => yaml_value_to_str(other),
+                        Some(other) => {
+                            match other {
+                                serde_yaml::Value::String(s) => s.clone(),
+                                _ => serde_yaml::to_string(other).unwrap_or_else(|_| "{}".to_string()),
+                            }
+                        }
                     };
                     (k.clone(), val)
                 })
@@ -56,90 +65,27 @@ impl ListOrDict {
     }
 }
 
-// ============ Container types (SPEC.md §2.3) ============
+// ============ StringOrList ============
 
-/// Specification for running a single container.
-/// Requirement 2.7, Task 2.1: Exactly 9 canonical fields.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ContainerSpec {
-    pub image: String,
-    pub name: Option<String>,
-    pub ports: Option<Vec<String>>,
-    pub volumes: Option<Vec<String>>,
-    pub env: Option<HashMap<String, String>>,
-    pub cmd: Option<Vec<String>>,
-    pub entrypoint: Option<Vec<String>>,
-    pub network: Option<String>,
-    pub rm: Option<bool>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum StringOrList {
+    String(String),
+    List(Vec<String>),
 }
 
-/// Handle returned after creating/running a container.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-pub struct ContainerHandle {
-    pub id: String,
-    pub name: Option<String>,
-}
-
-/// Information about a running (or stopped) container.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-pub struct ContainerInfo {
-    pub id: String,
-    pub name: String,
-    pub image: String,
-    pub status: String,
-    pub ports: Vec<String>,
-    pub created: String,
-}
-
-/// Logs from a container.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-pub struct ContainerLogs {
-    pub stdout: String,
-    pub stderr: String,
-}
-
-impl IntoIterator for ContainerLogs {
-    type Item = (String, String);
-    type IntoIter = std::vec::IntoIter<Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        vec![("stdout".to_string(), self.stdout), ("stderr".to_string(), self.stderr)].into_iter()
+impl StringOrList {
+    pub fn to_list(&self) -> Vec<String> {
+        match self {
+            StringOrList::String(s) => vec![s.clone()],
+            StringOrList::List(l) => l.clone(),
+        }
     }
 }
 
-/// Information about a container image.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ImageInfo {
-    pub id: String,
-    pub repository: String,
-    pub tag: String,
-    pub size: u64,
-    pub created: String,
-}
+// ============ DependsOn ============
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum IsolationLevel {
-    None,
-    Process,
-    Container,
-    MicroVm,
-    Wasm,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct BackendInfo {
-    pub name: String,
-    pub available: bool,
-    pub reason: Option<String>,
-    pub version: Option<String>,
-    pub mode: String, // "local" | "remote"
-    #[serde(rename = "isolationLevel")]
-    pub isolation_level: IsolationLevel,
-}
-
-// ============ Compose Types ============
-
+/// `depends_on` condition values (compose-spec §service.depends_on)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DependsOnCondition {
@@ -148,16 +94,18 @@ pub enum DependsOnCondition {
     ServiceCompletedSuccessfully,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Per-dependency entry in the object form of depends_on
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComposeDependsOn {
-    pub condition: DependsOnCondition,
+    pub condition: Option<DependsOnCondition>,
     #[serde(default)]
     pub required: Option<bool>,
     #[serde(default)]
     pub restart: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// `depends_on` can be a list of service names or a map with conditions
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum DependsOnSpec {
     List(Vec<String>),
@@ -165,6 +113,7 @@ pub enum DependsOnSpec {
 }
 
 impl DependsOnSpec {
+    /// Return all dependency service names.
     pub fn service_names(&self) -> Vec<String> {
         match self {
             DependsOnSpec::List(names) => names.clone(),
@@ -173,6 +122,9 @@ impl DependsOnSpec {
     }
 }
 
+// ============ Volume ============
+
+/// Volume mount type (compose-spec §service.volumes[].type)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum VolumeType {
@@ -184,7 +136,17 @@ pub enum VolumeType {
     Image,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum IsolationLevel {
+    None,
+    Process,
+    Container,
+    MicroVm,
+    Wasm,
+}
+
+/// Long-form volume mount (compose-spec §service.volumes[])
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComposeServiceVolume {
     #[serde(rename = "type")]
     pub volume_type: VolumeType,
@@ -198,33 +160,63 @@ pub struct ComposeServiceVolume {
     pub image: Option<ComposeServiceVolumeImage>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComposeServiceVolumeBind {
     pub propagation: Option<String>,
     pub create_host_path: Option<bool>,
-    pub recursive: Option<String>,
+    #[serde(rename = "recursive")]
+    pub recursive_opt: Option<String>,
     pub selinux: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComposeServiceVolumeOpts {
     pub labels: Option<ListOrDict>,
     pub nocopy: Option<bool>,
     pub subpath: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComposeServiceVolumeTmpfs {
     pub size: Option<serde_yaml::Value>,
     pub mode: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComposeServiceVolumeImage {
     pub subpath: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Short or long volume form
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum VolumeEntry {
+    Short(String),
+    Long(ComposeServiceVolume),
+}
+
+impl VolumeEntry {
+    /// Convert to "source:target[:ro]" string form for backend CLI args.
+    pub fn to_string_form(&self) -> String {
+        match self {
+            VolumeEntry::Short(s) => s.clone(),
+            VolumeEntry::Long(v) => {
+                let src = v.source.as_deref().unwrap_or("");
+                let tgt = v.target.as_deref().unwrap_or("");
+                if v.read_only.unwrap_or(false) {
+                    format!("{}:{}:ro", src, tgt)
+                } else {
+                    format!("{}:{}", src, tgt)
+                }
+            }
+        }
+    }
+}
+
+// ============ Port ============
+
+/// Port mapping (long form, compose-spec §service.ports[])
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComposeServicePort {
     pub name: Option<String>,
     pub mode: Option<String>,
@@ -235,20 +227,8 @@ pub struct ComposeServicePort {
     pub app_protocol: Option<String>,
 }
 
-impl ComposeServicePort {
-    pub fn to_string_form(&self) -> String {
-        let container = yaml_value_to_str(&self.target);
-        match &self.published {
-            Some(pub_) => {
-                let host = yaml_value_to_str(pub_);
-                format!("{}:{}", host, container)
-            }
-            None => container,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Port can be a short string/number or a long-form object
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PortSpec {
     Short(serde_yaml::Value),
@@ -256,15 +236,28 @@ pub enum PortSpec {
 }
 
 impl PortSpec {
+    /// Convert to "host:container" string form for backend CLI args.
     pub fn to_string_form(&self) -> String {
         match self {
             PortSpec::Short(v) => yaml_value_to_str(v),
-            PortSpec::Long(p) => p.to_string_form(),
+            PortSpec::Long(p) => {
+                let container = yaml_value_to_str(&p.target);
+                match &p.published {
+                    Some(pub_) => {
+                        let host = yaml_value_to_str(pub_);
+                        format!("{}:{}", host, container)
+                    }
+                    None => container,
+                }
+            }
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+// ============ Networks on service ============
+
+/// Service network attachment config
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComposeServiceNetworkConfig {
     pub aliases: Option<Vec<String>>,
     pub ipv4_address: Option<String>,
@@ -272,7 +265,8 @@ pub struct ComposeServiceNetworkConfig {
     pub priority: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// `networks` field on a service: list or map
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ServiceNetworks {
     List(Vec<String>),
@@ -288,10 +282,21 @@ impl ServiceNetworks {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+// ============ Build ============
+
+/// Build configuration (string shorthand or full object)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum BuildSpec {
+    Context(String),
+    Config(ComposeServiceBuild),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComposeServiceBuild {
     pub context: Option<String>,
-    pub dockerfile: Option<String>,
+    #[serde(alias = "dockerfile")]
+    pub containerfile: Option<String>,
     pub dockerfile_inline: Option<String>,
     pub args: Option<ListOrDict>,
     pub ssh: Option<serde_yaml::Value>,
@@ -316,14 +321,14 @@ pub struct ComposeServiceBuild {
     pub entitlements: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
-pub enum BuildSpec {
-    Context(String),
-    Config(ComposeServiceBuild),
-}
-
 impl BuildSpec {
+    pub fn context(&self) -> Option<&str> {
+        match self {
+            BuildSpec::Context(s) => Some(s.as_str()),
+            BuildSpec::Config(b) => b.context.as_deref(),
+        }
+    }
+
     pub fn as_build(&self) -> ComposeServiceBuild {
         match self {
             BuildSpec::Context(ctx) => ComposeServiceBuild {
@@ -335,7 +340,9 @@ impl BuildSpec {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+// ============ Healthcheck ============
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComposeHealthcheck {
     pub test: serde_yaml::Value,
     pub interval: Option<String>,
@@ -346,7 +353,9 @@ pub struct ComposeHealthcheck {
     pub disable: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+// ============ Deployment ============
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComposeDeployment {
     pub mode: Option<String>,
     pub replicas: Option<u32>,
@@ -358,26 +367,30 @@ pub struct ComposeDeployment {
     pub rollback_config: Option<serde_yaml::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComposeDeploymentResources {
     pub limits: Option<ComposeResourceSpec>,
     pub reservations: Option<ComposeResourceSpec>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComposeResourceSpec {
     pub cpus: Option<serde_yaml::Value>,
     pub memory: Option<String>,
     pub pids: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+// ============ Logging ============
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComposeLogging {
     pub driver: Option<String>,
     pub options: Option<IndexMap<String, serde_yaml::Value>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+// ============ Network ============
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComposeNetworkIpamConfig {
     pub subnet: Option<String>,
     pub ip_range: Option<String>,
@@ -385,14 +398,15 @@ pub struct ComposeNetworkIpamConfig {
     pub aux_addresses: Option<IndexMap<String, String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComposeNetworkIpam {
     pub driver: Option<String>,
     pub config: Option<Vec<ComposeNetworkIpamConfig>>,
     pub options: Option<IndexMap<String, String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+/// Top-level network definition
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComposeNetwork {
     pub name: Option<String>,
     pub driver: Option<String>,
@@ -406,7 +420,10 @@ pub struct ComposeNetwork {
     pub labels: Option<ListOrDict>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+// ============ Volume ============
+
+/// Top-level volume definition
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComposeVolume {
     pub name: Option<String>,
     pub driver: Option<String>,
@@ -415,7 +432,10 @@ pub struct ComposeVolume {
     pub labels: Option<ListOrDict>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+// ============ Secret ============
+
+/// Top-level secret definition
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComposeSecret {
     pub name: Option<String>,
     pub environment: Option<String>,
@@ -427,8 +447,11 @@ pub struct ComposeSecret {
     pub template_driver: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-pub struct ComposeConfig {
+// ============ Config ============
+
+/// Top-level config definition (compose-spec `config` object)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ComposeConfigObj {
     pub name: Option<String>,
     pub content: Option<String>,
     pub environment: Option<String>,
@@ -438,7 +461,10 @@ pub struct ComposeConfig {
     pub template_driver: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+// ============ ComposeService ============
+
+/// Full service definition (compose-spec §service)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComposeService {
     pub image: Option<String>,
     pub build: Option<BuildSpec>,
@@ -492,10 +518,62 @@ pub struct ComposeService {
     pub extends: Option<serde_yaml::Value>,
     pub post_start: Option<Vec<serde_yaml::Value>>,
     pub pre_stop: Option<Vec<serde_yaml::Value>>,
-    pub isolation_level: Option<IsolationLevel>,
 }
 
 impl ComposeService {
+    /// Whether the service needs to build an image before running.
+    pub fn needs_build(&self) -> bool {
+        self.build.is_some() && self.image.is_none()
+    }
+
+    /// Return the image tag to use for this service.
+    pub fn image_ref(&self, service_name: &str) -> String {
+        if let Some(image) = &self.image {
+            return image.clone();
+        }
+        format!("{}-image", service_name)
+    }
+
+    /// Get resolved environment as a flat map.
+    pub fn resolved_env(&self) -> std::collections::HashMap<String, String> {
+        self.environment
+            .as_ref()
+            .map(|e| e.to_map())
+            .unwrap_or_default()
+    }
+
+    /// Get port strings in "host:container" form.
+    pub fn port_strings(&self) -> Vec<String> {
+        self.ports
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|p| p.to_string_form())
+            .collect()
+    }
+
+    /// Get volume mount strings.
+    pub fn volume_strings(&self) -> Vec<String> {
+        self.volumes
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|v| {
+                // Try to parse as VolumeEntry (short or long)
+                if let Ok(short) = serde_yaml::from_value::<VolumeEntry>(v.clone()) {
+                    return Some(short.to_string_form());
+                }
+                // Fallback: string representation
+                Some(yaml_value_to_str(v))
+            })
+            .collect()
+    }
+
+    /// Get the explicit container_name, if set.
+    pub fn explicit_name(&self) -> Option<&str> {
+        self.container_name.as_deref()
+    }
+
     /// Get command as a list of strings.
     pub fn command_list(&self) -> Option<Vec<String>> {
         self.command.as_ref().map(|c| match c {
@@ -509,7 +587,10 @@ impl ComposeService {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+// ============ ComposeSpec ============
+
+/// Root compose spec (compose-spec §root)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ComposeSpec {
     pub name: Option<String>,
     pub version: Option<String>,
@@ -518,7 +599,7 @@ pub struct ComposeSpec {
     pub networks: Option<IndexMap<String, Option<ComposeNetwork>>>,
     pub volumes: Option<IndexMap<String, Option<ComposeVolume>>>,
     pub secrets: Option<IndexMap<String, Option<ComposeSecret>>>,
-    pub configs: Option<IndexMap<String, Option<ComposeConfig>>>,
+    pub configs: Option<IndexMap<String, Option<ComposeConfigObj>>>,
     pub include: Option<Vec<serde_yaml::Value>>,
     pub models: Option<IndexMap<String, serde_yaml::Value>>,
     #[serde(flatten)]
@@ -529,6 +610,17 @@ impl ComposeSpec {
     /// Parse from a YAML string.
     pub fn parse_str(yaml: &str) -> Result<Self, crate::error::ComposeError> {
         serde_yaml::from_str(yaml).map_err(crate::error::ComposeError::ParseError)
+    }
+
+    /// Parse from raw YAML bytes.
+    pub fn parse(yaml: &[u8]) -> Result<Self, crate::error::ComposeError> {
+        serde_yaml::from_slice(yaml).map_err(crate::error::ComposeError::ParseError)
+    }
+
+    /// Serialize to YAML.
+    pub fn to_yaml(&self) -> Result<String, crate::error::ComposeError> {
+        serde_yaml::to_string(self)
+            .map_err(|e| crate::error::ComposeError::ParseError(e))
     }
 
     /// Merge another ComposeSpec into this one (last-writer-wins for all maps).
@@ -579,181 +671,166 @@ impl ComposeSpec {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+// ============ ComposeHandle ============
+
+/// Opaque handle to a running compose stack.
+/// The stack ID is used to look up the live ComposeEngine in a global registry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComposeHandle {
     pub stack_id: u64,
     pub project_name: String,
     pub services: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ServiceGraphEdge {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceGraph {
+    pub nodes: Vec<String>,
+    pub edges: Vec<ServiceEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceEdge {
     pub from: String,
     pub to: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ServiceGraph {
-    pub nodes: Vec<String>,
-    pub edges: Vec<ServiceGraphEdge>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ServiceStatus {
-    pub service: String,
-    pub state: String, // "running" | "stopped" | "failed" | "pending" | "unknown"
-    #[serde(rename = "containerId")]
-    pub container_id: Option<String>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StackStatus {
     pub services: Vec<ServiceStatus>,
     pub healthy: bool,
 }
 
-// ============ Workload Graph Types (Task 14) ============
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum RuntimeSpec {
-    Oci,
-    Microvm { config: Option<serde_json::Value> },
-    Wasm { module: Option<String> },
-    Auto,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PolicySpec {
-    pub tier: PolicyTier,
-    pub no_network: Option<bool>,
-    pub read_only_root: Option<bool>,
-    pub seccomp: Option<bool>,
+pub struct ServiceStatus {
+    pub service: String,
+    pub state: String, // "running" | "stopped" | "failed" | "pending" | "unknown"
+    pub container_id: Option<String>,
+    pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyTier {
-    Default,
-    Isolated,
-    Hardened,
-    Untrusted,
-}
+// ============ Container types (for single-container API) ============
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum RefProjection {
-    Endpoint,
-    Ip,
-    InternalUrl,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Specification for running a single container.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkloadRef {
-    pub node_id: String,
-    pub projection: RefProjection,
-    pub port: Option<String>,
+pub struct ContainerSpec {
+    pub image: String,
+    pub name: Option<String>,
+    pub ports: Option<Vec<String>>,
+    pub volumes: Option<Vec<String>>,
+    pub env: Option<std::collections::HashMap<String, String>>,
+    pub cmd: Option<Vec<String>>,
+    pub entrypoint: Option<Vec<String>>,
+    pub network: Option<String>,
+    pub rm: Option<bool>,
+    pub read_only: Option<bool>,
+    pub seccomp: Option<String>,
+    pub labels: Option<std::collections::HashMap<String, String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
-pub enum WorkloadEnvValue {
-    Literal(String),
-    Ref(WorkloadRef),
+/// Handle returned after creating/running a container.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainerHandle {
+    pub id: String,
+    pub name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkloadNode {
+/// Information about a running (or stopped) container.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainerInfo {
     pub id: String,
     pub name: String,
-    pub image: Option<String>,
-    pub resources: Option<serde_json::Value>,
+    pub image: String,
+    pub status: String,
     pub ports: Vec<String>,
-    pub env: HashMap<String, WorkloadEnvValue>,
-    pub depends_on: Vec<String>,
-    pub runtime: RuntimeSpec,
-    pub policy: PolicySpec,
+    pub labels: std::collections::HashMap<String, String>,
+    pub created: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkloadGraph {
-    pub name: String,
-    pub nodes: IndexMap<String, WorkloadNode>,
-    pub edges: Vec<WorkloadEdge>,
+/// Logs from a container.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainerLogs {
+    pub stdout: String,
+    pub stderr: String,
 }
 
+/// Information about a container image.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkloadEdge {
-    pub from: String,
-    pub to: String,
-    pub condition: Option<String>, // "started" | "healthy" | "completed"
+pub struct ImageInfo {
+    pub id: String,
+    pub repository: String,
+    pub tag: String,
+    pub size: u64,
+    pub created: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RunGraphOptions {
-    pub strategy: Option<ExecutionStrategy>,
-    pub on_failure: Option<FailureStrategy>,
+pub struct BackendInfo {
+    pub name: String,
+    pub available: bool,
+    pub reason: Option<String>,
+    pub version: Option<String>,
+    pub mode: String, // "local" | "remote"
+    pub isolation_level: IsolationLevel,
 }
 
-impl Default for RunGraphOptions {
-    fn default() -> Self {
-        Self {
-            strategy: Some(ExecutionStrategy::DependencyAware),
-            on_failure: Some(FailureStrategy::RollbackAll),
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Feature: alloy-container, Property 4: Data model JSON round-trip
+    proptest! {
+        #[test]
+        fn test_container_spec_roundtrip(image in ".*", name in prop::option::of(".*"), rm in prop::option::of(any::<bool>())) {
+            let spec = ContainerSpec {
+                image,
+                name,
+                rm,
+                ..Default::default()
+            };
+            let json = serde_json::to_string(&spec).unwrap();
+            let de: ContainerSpec = serde_json::from_str(&json).unwrap();
+            assert_eq!(spec, de);
+        }
+
+        #[test]
+        fn test_image_info_roundtrip(id in ".*", repository in ".*", tag in ".*", size in any::<u64>(), created in ".*") {
+            let info = ImageInfo { id, repository, tag, size, created };
+            let json = serde_json::to_string(&info).unwrap();
+            let de: ImageInfo = serde_json::from_str(&json).unwrap();
+            assert_eq!(info, de);
         }
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum ExecutionStrategy {
-    Sequential,
-    MaxParallel,
-    DependencyAware,
-    ParallelSafe,
-}
+    // Feature: alloy-container, Property 12: depends_on condition validation
+    #[test]
+    fn test_depends_on_condition_validation() {
+        let valid = vec!["service_started", "service_healthy", "service_completed_successfully"];
+        for v in valid {
+            let json = format!("\"{}\"", v);
+            let _: DependsOnCondition = serde_json::from_str(&json).unwrap();
+        }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum FailureStrategy {
-    RollbackAll,
-    PartialContinue,
-    HaltGraph,
-}
+        let invalid = "\"invalid_condition\"";
+        let res: std::result::Result<DependsOnCondition, _> = serde_json::from_str(invalid);
+        assert!(res.is_err());
+    }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct GraphStatus {
-    pub nodes: HashMap<String, NodeState>,
-    pub healthy: bool,
-    pub errors: HashMap<String, String>,
-}
+    // Feature: alloy-container, Property 13: Volume type validation
+    #[test]
+    fn test_volume_type_validation() {
+        let valid = vec!["bind", "volume", "tmpfs", "cluster", "npipe", "image"];
+        for v in valid {
+            let json = format!("\"{}\"", v);
+            let _: VolumeType = serde_json::from_str(&json).unwrap();
+        }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum NodeState {
-    Running,
-    Stopped,
-    Failed,
-    Pending,
-    Unknown,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeInfo {
-    pub node_id: String,
-    pub name: String,
-    pub container_id: Option<String>,
-    pub state: NodeState,
-    pub image: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct GraphHandle {
-    pub id: u64,
+        let invalid = "\"invalid_type\"";
+        let res: std::result::Result<VolumeType, _> = serde_json::from_str(invalid);
+        assert!(res.is_err());
+    }
 }

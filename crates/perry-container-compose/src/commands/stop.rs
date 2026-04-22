@@ -1,17 +1,19 @@
 use crate::error::Result;
 use crate::backend::ContainerBackend;
-use crate::service::Service;
 use crate::commands::ContainerCommand;
+use crate::types::ComposeService;
+use crate::service::service_container_name;
 use async_trait::async_trait;
 
-pub struct StopCommand<'a> {
-    pub service_name: &'a str,
-    pub service: &'a Service,
+pub struct StopCommand {
+    pub service: ComposeService,
+    pub service_name: String,
 }
 
 #[async_trait]
-impl<'a> ContainerCommand for StopCommand<'a> {
+impl ContainerCommand for StopCommand {
     async fn exec(&self, backend: &dyn ContainerBackend) -> Result<()> {
-        backend.stop(&self.service.container_name(self.service_name), None).await
+        let name = service_container_name(&self.service, &self.service_name);
+        backend.stop(&name, None).await
     }
 }

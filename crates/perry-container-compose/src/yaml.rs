@@ -119,3 +119,25 @@ mod tests_v5 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests_v5 {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Feature: alloy-container, Property 6: YAML round-trip (CLI path)
+    proptest! {
+        #[test]
+        fn test_yaml_roundtrip(name in ".*", version in ".*") {
+            let spec = ComposeSpec {
+                name: Some(name),
+                version: Some(version),
+                ..Default::default()
+            };
+            let yaml_str = spec.to_yaml().unwrap();
+            let de = ComposeSpec::parse_str(&yaml_str).unwrap();
+            assert_eq!(spec.name, de.name);
+            assert_eq!(spec.version, de.version);
+        }
+    }
+}
