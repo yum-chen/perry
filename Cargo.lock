@@ -4330,6 +4330,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "image",
+ "indexmap",
  "itoa",
  "jsonwebtoken",
  "lazy_static",

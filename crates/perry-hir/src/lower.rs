@@ -2441,8 +2441,8 @@ fn lower_module_decl(
             // Check if this is a native module import
             let is_native = is_native_module(&source);
 
-            // Special handling for perry/container and perry/container-compose
-            if source == "perry/container" || source == "perry/container-compose" {
+            // Special handling for perry/container, perry/container-compose, and perry/workloads
+            if source == "perry/container" || source == "perry/container-compose" || source == "perry/workloads" {
                 for spec in &import_decl.specifiers {
                     if let ast::ImportSpecifier::Named(named) = spec {
                         let local = named.local.sym.to_string();

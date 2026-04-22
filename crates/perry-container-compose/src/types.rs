@@ -468,6 +468,8 @@ pub struct ComposeService {
     pub extends: Option<serde_yaml::Value>,
     pub post_start: Option<Vec<serde_yaml::Value>>,
     pub pre_stop: Option<Vec<serde_yaml::Value>>,
+    #[serde(rename = "isolation_level")]
+    pub isolation_level: Option<IsolationLevel>,
 }
 
 impl ComposeService {
@@ -597,6 +599,36 @@ pub struct ComposeHandle {
     pub services: Vec<String>,
 }
 
+// ============ Isolation and Backend Info ============
+
+/// Isolation level of the container runtime.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum IsolationLevel {
+    None,
+    Process,
+    Container,
+    MicroVm,
+    Wasm,
+}
+
+impl Default for IsolationLevel {
+    fn default() -> Self {
+        Self::Container
+    }
+}
+
+/// Information about a detected container backend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendInfo {
+    pub name: String,
+    pub available: bool,
+    pub reason: Option<String>,
+    pub version: Option<String>,
+    pub mode: String, // "local" | "remote"
+    pub isolation_level: IsolationLevel,
+}
+
 // ============ Container types (for single-container API) ============
 
 /// Specification for running a single container.
@@ -613,6 +645,7 @@ pub struct ContainerSpec {
     pub rm: Option<bool>,
     pub read_only: Option<bool>,
     pub security_opt: Option<Vec<String>>,
+    pub isolation_level: Option<IsolationLevel>,
 }
 
 /// Handle returned after creating/running a container.

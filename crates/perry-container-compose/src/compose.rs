@@ -4,6 +4,7 @@ use crate::types::{
     ComposeHandle, ComposeSpec, ContainerInfo, ContainerLogs, ContainerSpec,
 };
 use indexmap::IndexMap;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -18,6 +19,43 @@ pub struct ComposeEngine {
     pub spec: ComposeSpec,
     pub project_name: String,
     pub backend: Arc<dyn ContainerBackend>,
+}
+
+/// A serializable representation of the resolved DAG.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceGraph {
+    pub nodes: Vec<String>,
+    pub edges: Vec<ServiceEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceEdge {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceState {
+    Running,
+    Stopped,
+    Failed,
+    Pending,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceStatus {
+    pub service: String,
+    pub state: ServiceState,
+    pub container_id: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StackStatus {
+    pub services: Vec<ServiceStatus>,
+    pub healthy: bool,
 }
 
 impl ComposeEngine {
@@ -153,6 +191,7 @@ impl ComposeEngine {
                 rm: None,
                 read_only: svc.read_only,
                 security_opt: svc.security_opt.clone(),
+                isolation_level: svc.isolation_level,
             };
 
             match self.backend.run(&container_spec).await {
@@ -293,6 +332,65 @@ impl ComposeEngine {
     pub async fn restart(&self, services: &[String]) -> Result<()> {
         self.stop(services).await?;
         self.start(services).await
+    }
+
+    pub fn graph(&self) -> Result<ServiceGraph> {
+        let order = resolve_startup_order(&self.spec)?;
+        let mut edges = Vec::new();
+        for (name, svc) in &self.spec.services {
+            if let Some(deps) = &svc.depends_on {
+                for dep in deps.service_names() {
+                    edges.push(ServiceEdge {
+                        from: name.clone(),
+                        to: dep,
+                    });
+                }
+            }
+        }
+        Ok(ServiceGraph {
+            nodes: order,
+            edges,
+        })
+    }
+
+    pub async fn status(&self) -> Result<StackStatus> {
+        let mut services = Vec::new();
+        let mut all_running = true;
+
+        for (name, svc) in &self.spec.services {
+            let container_name = service::service_container_name(svc, name);
+            let (state, container_id, error) = match self.backend.inspect(&container_name).await {
+                Ok(info) => {
+                    let state = if info.status == "running" {
+                        ServiceState::Running
+                    } else {
+                        all_running = false;
+                        ServiceState::Stopped
+                    };
+                    (state, Some(info.id), None)
+                }
+                Err(e) => {
+                    all_running = false;
+                    if let ComposeError::NotFound(_) = e {
+                        (ServiceState::Pending, None, None)
+                    } else {
+                        (ServiceState::Failed, None, Some(e.to_string()))
+                    }
+                }
+            };
+
+            services.push(ServiceStatus {
+                service: name.clone(),
+                state,
+                container_id,
+                error,
+            });
+        }
+
+        Ok(StackStatus {
+            services,
+            healthy: all_running,
+        })
     }
 }
 

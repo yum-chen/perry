@@ -1,12 +1,12 @@
 //! Type definitions for the perry/container module.
 
 pub use perry_container_compose::types::{
-    ComposeConfig, ComposeDeployment, ComposeDependsOn, ComposeHandle,
-    ComposeHealthcheck, ComposeLogging, ComposeNetwork,
-    ComposeNetworkIpam, ComposeNetworkIpamConfig, ComposeSecret,
-    ComposeService, ComposeServiceNetworkConfig, ComposeServicePort,
-    ComposeServiceVolume, ComposeSpec, ContainerHandle, ContainerInfo,
-    ContainerLogs, ContainerSpec, ImageInfo, ListOrDict,
+    BackendInfo, ComposeConfig, ComposeDeployment, ComposeDependsOn, ComposeHandle,
+    ComposeHealthcheck, ComposeLogging, ComposeNetwork, ComposeNetworkIpam,
+    ComposeNetworkIpamConfig, ComposeSecret, ComposeService, ComposeServiceNetworkConfig,
+    ComposeServicePort, ComposeServiceVolume, ComposeSpec, ContainerHandle, ContainerInfo,
+    ContainerLogs, ContainerSpec, DependsOnCondition, DependsOnSpec, ImageInfo, IsolationLevel,
+    ListOrDict, PortSpec,
 };
 
 pub use perry_container_compose::ComposeError;
@@ -62,6 +62,8 @@ pub enum ContainerError {
     NoBackendFound { probed: Vec<perry_container_compose::BackendProbeResult> },
     #[error("Backend not available: {name} ({reason})")]
     BackendNotAvailable { name: String, reason: String },
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
     #[error("Compose error: {0}")]
     Compose(#[from] perry_container_compose::ComposeError),
 }

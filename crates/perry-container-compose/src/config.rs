@@ -1,6 +1,3 @@
-use crate::error::{ComposeError, Result};
-use crate::yaml;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Project configuration (from CLI flags or env)

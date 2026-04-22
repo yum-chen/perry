@@ -1,12 +1,11 @@
 use crate::error::{ComposeError, Result};
 use crate::types::{
-    ContainerHandle, ContainerInfo,
-    ContainerLogs, ContainerSpec, ImageInfo,
+    ContainerHandle, ContainerInfo, ContainerLogs, ContainerSpec, ImageInfo, IsolationLevel,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::process::Command;
 use std::time::Duration;
 
@@ -43,9 +42,22 @@ pub struct ExecResult {
     pub exit_code: i32,
 }
 
+/// The mechanism used to communicate with the container runtime.
+#[derive(Debug, Clone)]
+pub enum ExecutionStrategy {
+    /// Invoke a CLI binary (e.g. `docker`, `podman`).
+    CliExec { bin: PathBuf },
+    /// Communicate over a Unix domain socket (future).
+    ApiSocket { socket: PathBuf },
+    /// Spawn a micro-VM (future).
+    VmSpawn { config: serde_json::Value },
+}
+
 #[async_trait]
 pub trait ContainerBackend: Send + Sync {
     fn backend_name(&self) -> &str;
+    fn strategy(&self) -> &ExecutionStrategy;
+    fn isolation_level(&self) -> IsolationLevel;
     async fn check_available(&self) -> Result<()>;
     async fn run(&self, spec: &ContainerSpec) -> Result<ContainerHandle>;
     async fn create(&self, spec: &ContainerSpec) -> Result<ContainerHandle>;
@@ -340,6 +352,7 @@ impl CliProtocol for LimaProtocol {
 pub struct CliBackend<P: CliProtocol> {
     pub bin: PathBuf,
     pub protocol: P,
+    pub strategy: ExecutionStrategy,
 }
 
 pub type DockerBackend = CliBackend<DockerProtocol>;
@@ -348,7 +361,12 @@ pub type LimaBackend = CliBackend<LimaProtocol>;
 
 impl<P: CliProtocol> CliBackend<P> {
     pub fn new(bin: PathBuf, protocol: P) -> Self {
-        Self { bin, protocol }
+        let strategy = ExecutionStrategy::CliExec { bin: bin.clone() };
+        Self {
+            bin,
+            protocol,
+            strategy,
+        }
     }
 
     async fn exec_raw(&self, subcommand_args: &[String]) -> Result<(String, String)> {
@@ -377,7 +395,19 @@ impl<P: CliProtocol> CliBackend<P> {
 #[async_trait]
 impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
     fn backend_name(&self) -> &str {
-        self.bin.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
+        self.protocol.protocol_name()
+    }
+
+    fn strategy(&self) -> &ExecutionStrategy {
+        &self.strategy
+    }
+
+    fn isolation_level(&self) -> IsolationLevel {
+        match self.backend_name() {
+            "apple/container" => IsolationLevel::Container,
+            "lima" => IsolationLevel::MicroVm,
+            _ => IsolationLevel::Container,
+        }
     }
 
     async fn check_available(&self) -> Result<()> {
@@ -501,12 +531,36 @@ pub struct BackendProbeResult {
 }
 
 pub async fn detect_backend() -> std::result::Result<Box<dyn ContainerBackend>, Vec<BackendProbeResult>> {
-    if let Ok(name) = std::env::var("PERRY_CONTAINER_BACKEND") {
-        return probe_candidate(&name).await
-            .map_err(|reason| vec![BackendProbeResult { name: name.clone(), available: false, reason }]);
+    let mode = std::env::var("PERRY_CONTAINER_MODE").unwrap_or_else(|_| "local-first".to_string());
+    if mode != "local-first" && mode != "server-first" {
+        return Err(vec![BackendProbeResult {
+            name: "config".into(),
+            available: false,
+            reason: format!(
+                "Invalid PERRY_CONTAINER_MODE: {}. Expected 'local-first' or 'server-first'",
+                mode
+            ),
+        }]);
     }
 
-    let candidates = platform_candidates();
+    if let Ok(name) = std::env::var("PERRY_CONTAINER_BACKEND") {
+        return probe_candidate(&name).await.map_err(|reason| {
+            vec![BackendProbeResult {
+                name: name.clone(),
+                available: false,
+                reason,
+            }]
+        });
+    }
+
+    let mut candidates = platform_candidates().to_vec();
+    if mode == "server-first" {
+        candidates.sort_by_key(|&c| match c {
+            "docker" | "podman" => 0,
+            _ => 1,
+        });
+    }
+
     let mut results = Vec::new();
 
     for candidate in candidates {

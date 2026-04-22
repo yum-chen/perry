@@ -1,4 +1,3 @@
-use crate::error::Result;
 use md5::{Digest, Md5};
 
 /// Generate a unique container name: {service_name}-{md5_image_hash}-{random_hex}
