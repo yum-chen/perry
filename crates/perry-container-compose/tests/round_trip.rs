@@ -83,6 +83,48 @@ fn arb_compose_spec_with_dag() -> impl Strategy<Value = ComposeSpec> {
     })
 }
 
+// Feature: perry-container, Property 6: Environment variable interpolation correctness
+#[test]
+fn test_env_interpolation_manual() {
+    let mut env = std::collections::HashMap::new();
+    env.insert("VAR".to_string(), "val".to_string());
+    env.insert("EMPTY".to_string(), "".to_string());
+
+    assert_eq!(perry_container_compose::yaml::interpolate_yaml("hello ${VAR}", &env), "hello val");
+    assert_eq!(perry_container_compose::yaml::interpolate_yaml("hello ${MISSING:-default}", &env), "hello default");
+    assert_eq!(perry_container_compose::yaml::interpolate_yaml("hello ${EMPTY:-default}", &env), "hello default");
+    assert_eq!(perry_container_compose::yaml::interpolate_yaml("hello ${VAR:-default}", &env), "hello val");
+}
+
+// Feature: perry-container, Property 2: ContainerSpec CLI argument round-trip
+#[test]
+fn test_container_spec_to_docker_args() {
+    use perry_container_compose::types::ContainerSpec;
+    use perry_container_compose::backend::DockerProtocol;
+    use perry_container_compose::backend::CliProtocol;
+
+    let mut env = std::collections::HashMap::new();
+    env.insert("K".to_string(), "V".to_string());
+
+    let spec = ContainerSpec {
+        image: "nginx".into(),
+        name: Some("my-nginx".into()),
+        ports: Some(vec!["8080:80".into()]),
+        env: Some(env),
+        ..Default::default()
+    };
+
+    let protocol = DockerProtocol;
+    let args = protocol.run_args(&spec);
+
+    let args_str = args.join(" ");
+    assert!(args_str.contains("run -d"));
+    assert!(args_str.contains("--name my-nginx"));
+    assert!(args_str.contains("-p 8080:80"));
+    assert!(args_str.contains("-e K=V"));
+    assert!(args_str.contains("nginx"));
+}
+
 fn arb_compose_spec_with_cycle() -> impl Strategy<Value = ComposeSpec> {
     prop::collection::vec(arb_service(), 2..3).prop_map(|services| {
         let mut spec = ComposeSpec::default();

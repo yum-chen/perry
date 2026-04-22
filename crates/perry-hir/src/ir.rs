@@ -102,8 +102,6 @@ pub const NATIVE_MODULES: &[&str] = &[
     "perry/container",
     "perry/compose",
     "perry/container-compose",
-    // SQLite
-    "better-sqlite3",
 ];
 
 /// Check if a module path refers to a native stdlib module
@@ -131,9 +129,6 @@ const RUNTIME_ONLY_MODULES: &[&str] = &[
     "perry/widget",
     "perry/i18n",
     "perry/thread",
-    "perry/container",
-    "perry/compose",
-    "perry/container-compose",
 ];
 
 /// Check if a native module import requires linking perry-stdlib.

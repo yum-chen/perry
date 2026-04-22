@@ -4299,6 +4299,7 @@ dependencies = [
  "pbkdf2",
  "perry-container-compose",
  "perry-runtime",
+ "proptest",
  "rand 0.8.5",
  "redis",
  "regex",

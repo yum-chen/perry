@@ -120,7 +120,8 @@ pub async fn run(cli: Cli) -> Result<()> {
 
     let backend = crate::backend::detect_backend().await
         .map_err(|probed| ComposeError::NoBackendFound { probed })?;
-    let backend = Arc::new(backend);
+    // Explicitly cast Box<dyn ContainerBackend> to Arc<dyn ContainerBackend + Send + Sync>
+    let backend: Arc<dyn crate::backend::ContainerBackend + Send + Sync> = Arc::from(backend);
 
     let engine = ComposeEngine::new(project.spec.clone(), project.project_name.clone(), backend);
 

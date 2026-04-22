@@ -372,6 +372,7 @@ pub struct ContainerSpec {
     pub ports: Option<Vec<String>>,
     pub volumes: Option<Vec<String>>,
     pub env: Option<std::collections::HashMap<String, String>>,
+    pub labels: Option<std::collections::HashMap<String, String>>,
     pub cmd: Option<Vec<String>>,
     pub entrypoint: Option<Vec<String>>,
     pub network: Option<String>,
