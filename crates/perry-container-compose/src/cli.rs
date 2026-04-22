@@ -1,22 +1,19 @@
+use crate::error::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use crate::config::ProjectConfig;
-use crate::project::ComposeProject;
-use crate::compose::ComposeEngine;
-use crate::backend::detect_backend;
 use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(name = "perry-compose")]
-#[command(version)]
+#[command(version = "0.5.58")]
 pub struct Cli {
-    #[arg(short, long)]
+    #[arg(short, long, action = clap::ArgAction::Append)]
     pub file: Vec<PathBuf>,
 
     #[arg(short, long)]
     pub project_name: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, action = clap::ArgAction::Append)]
     pub env_file: Vec<PathBuf>,
 
     #[command(subcommand)]
@@ -28,59 +25,47 @@ pub enum Commands {
     Up {
         #[arg(short, long)]
         detach: bool,
-
         #[arg(long)]
         build: bool,
-
         #[arg(long)]
         remove_orphans: bool,
-
         services: Vec<String>,
     },
     Down {
         #[arg(short, long)]
         volumes: bool,
-
         #[arg(long)]
         remove_orphans: bool,
-
         services: Vec<String>,
     },
     Ps {
         #[arg(short, long)]
         all: bool,
-
         services: Vec<String>,
     },
     Logs {
         #[arg(short, long)]
         follow: bool,
-
         #[arg(long)]
         tail: Option<u32>,
-
         #[arg(short, long)]
         timestamps: bool,
-
         services: Vec<String>,
     },
     Exec {
         service: String,
+        #[arg(trailing_var_arg = true)]
         cmd: Vec<String>,
-
-        #[arg(short, long)]
+        #[arg(short, long, action = clap::ArgAction::Append)]
         env: Vec<String>,
-
         #[arg(short, long)]
-        workdir: Option<String>,
-
+        workdir: Option<PathBuf>,
         #[arg(short, long)]
         user: Option<String>,
     },
     Config {
         #[arg(long, default_value = "yaml")]
         format: String,
-
         #[arg(long)]
         resolve_image_digests: bool,
     },
@@ -95,49 +80,52 @@ pub enum Commands {
     },
 }
 
-pub async fn run() -> crate::error::Result<()> {
+pub async fn run() -> Result<()> {
     let cli = Cli::parse();
 
-    let config = ProjectConfig {
-        files: cli.file,
-        project_name: cli.project_name,
-        env_files: cli.env_file,
-    };
+    // 1. Resolve project configuration
+    let project_dir = std::env::current_dir()?;
+    let env = crate::yaml::load_env(&project_dir, &cli.env_file);
 
-    let project = ComposeProject::load(&config)?;
-    let backend = detect_backend().await.map_err(|probed| {
-        crate::error::ComposeError::NoBackendFound { probed }
-    })?;
+    let compose_files = crate::config::resolve_compose_files(&project_dir, cli.file.clone());
 
-    let engine = Arc::new(ComposeEngine::new(project.spec, project.project_name, Arc::from(backend)));
+    let spec = crate::yaml::parse_and_merge_files(&compose_files, &env)?;
+    let project_name = crate::config::resolve_project_name(&project_dir, cli.project_name.clone());
+
+    // 2. Detect backend
+    let backend = crate::backend::detect_backend().await
+        .map_err(|e| crate::error::ComposeError::NoBackendFound { probed: e })?;
+    let backend_shared = Arc::from(backend);
+
+    // 3. Create engine and execute command
+    let engine = crate::compose::ComposeEngine::new(spec, project_name, backend_shared);
 
     match cli.command {
         Commands::Up { detach, build, remove_orphans, services } => {
             engine.up(&services, detach, build, remove_orphans).await?;
         }
-        Commands::Down { volumes, remove_orphans, services } => {
-            engine.down(&services, remove_orphans, volumes).await?;
+        Commands::Down { volumes, .. } => {
+            engine.down(volumes).await?;
         }
-        Commands::Ps { all: _, services } => {
+        Commands::Ps { .. } => {
             let infos = engine.ps().await?;
+            println!("{:<20} {:<20} {:<20} {:<20}", "NAME", "IMAGE", "STATUS", "PORTS");
             for info in infos {
-                if !services.is_empty() && !services.contains(&info.name) { continue; }
-                println!("{:<20} {:<20} {:<20}", info.name, info.image, info.status);
+                println!("{:<20} {:<20} {:<20} {:<20?}", info.name, info.image, info.status, info.ports);
             }
         }
-        Commands::Logs { follow, tail, timestamps: _, services } => {
-            let logs = engine.logs(&services, tail, follow).await?;
-            for (svc, content) in logs {
-                println!("=== {} ===\n{}", svc, content);
-            }
+        Commands::Logs { services, tail, .. } => {
+            let svc = services.first().map(|s| s.as_str());
+            let logs = engine.logs(svc, tail).await?;
+            println!("STDOUT:\n{}", logs.stdout);
+            println!("STDERR:\n{}", logs.stderr);
         }
-        Commands::Exec { service, cmd, env: _, workdir, user: _ } => {
-            // TODO: parse env
-            let res = engine.exec(&service, &cmd, None, workdir.as_deref()).await?;
+        Commands::Exec { service, cmd, .. } => {
+            let res = engine.exec(&service, &cmd).await?;
             print!("{}", res.stdout);
             eprint!("{}", res.stderr);
         }
-        Commands::Config { format: _, resolve_image_digests: _ } => {
+        Commands::Config { .. } => {
             println!("{}", engine.config()?);
         }
         Commands::Start { services } => {

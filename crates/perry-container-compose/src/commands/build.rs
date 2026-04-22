@@ -5,12 +5,13 @@ use crate::commands::ContainerCommand;
 use async_trait::async_trait;
 
 pub struct BuildCommand<'a> {
-    pub service: &'a Service<'a>,
+    pub service_name: &'a str,
+    pub service: &'a Service,
 }
 
 #[async_trait]
 impl<'a> ContainerCommand for BuildCommand<'a> {
     async fn exec(&self, backend: &dyn ContainerBackend) -> Result<()> {
-        self.service.build_command(backend).await
+        self.service.build_command(self.service_name, backend).await
     }
 }

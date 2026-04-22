@@ -2,52 +2,30 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use super::types::ContainerInfo;
 use perry_container_compose::error::ComposeError;
+use perry_container_compose::types::{RefProjection, WorkloadRef};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum RuntimeSpec {
-    Oci,
-    Microvm { config: Option<serde_json::Value> },
-    Wasm { module: Option<String> },
-    Auto,
-}
+/// Task 14.2: Implementation of WorkloadRef resolution
+pub fn resolve_workload_ref(
+    workload_ref: &WorkloadRef,
+    running_nodes: &HashMap<String, ContainerInfo>
+) -> Result<String, ComposeError> {
+    let node = running_nodes.get(&workload_ref.node_id)
+        .ok_or_else(|| ComposeError::ValidationError {
+            message: format!("Node '{}' not found in running set", workload_ref.node_id)
+        })?;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PolicySpec {
-    pub tier: String, // "default" | "isolated" | "hardened" | "untrusted"
-    pub no_network: Option<bool>,
-    pub read_only_root: Option<bool>,
-    pub seccomp: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkloadRef {
-    pub node_id: String,
-    pub projection: String, // "endpoint" | "ip" | "internal_url"
-    pub port: Option<String>,
-}
-
-impl WorkloadRef {
-    pub fn resolve(&self, running_nodes: &HashMap<String, ContainerInfo>) -> Result<String, ComposeError> {
-        let node = running_nodes.get(&self.node_id)
-            .ok_or_else(|| ComposeError::ValidationError {
-                message: format!("Node '{}' not found in running set", self.node_id)
-            })?;
-
-        match self.projection.as_str() {
-            "endpoint" => {
-                let port = self.port.as_deref().unwrap_or("80");
-                Ok(format!("{}:{}", node.name, port)) // Simplified for now
-            }
-            "ip" => {
-                // In a real implementation, we'd extract IP from ContainerInfo
-                Ok(node.name.clone())
-            }
-            "internal_url" => {
-                let port = self.port.as_deref().unwrap_or("80");
-                Ok(format!("http://{}:{}", node.name, port))
-            }
-            _ => Err(ComposeError::ValidationError { message: "Invalid projection".into() }),
+    match workload_ref.projection {
+        RefProjection::Endpoint => {
+            let port = workload_ref.port.as_deref().unwrap_or("80");
+            // Placeholder for host_ip:host_port from node.ports
+            Ok(format!("{}:{}", node.name, port))
+        }
+        RefProjection::Ip => {
+            Ok(node.name.clone()) // Placeholder for actual IP
+        }
+        RefProjection::InternalUrl => {
+            let port = workload_ref.port.as_deref().unwrap_or("80");
+            Ok(format!("http://{}:{}", node.name, port))
         }
     }
 }

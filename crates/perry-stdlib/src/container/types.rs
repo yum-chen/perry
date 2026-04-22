@@ -76,9 +76,6 @@ impl From<ContainerSpec> for perry_container_compose::types::ContainerSpec {
             entrypoint: spec.entrypoint,
             network: spec.network,
             rm: spec.rm,
-            read_only: None,
-            seccomp: None,
-            isolation_level: None,
         }
     }
 }

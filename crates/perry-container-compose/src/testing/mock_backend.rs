@@ -23,6 +23,7 @@ pub enum RecordedCall {
     RemoveNetwork(String),
     CreateVolume(String),
     RemoveVolume(String),
+    InspectNetwork(String),
 }
 
 pub struct MockBackend {
@@ -96,7 +97,6 @@ impl ContainerBackend for MockBackend {
         self.record(RecordedCall::Logs(id.to_string(), tail));
         self.pop_response()
     }
-    async fn logs_follow(&self, _id: &str, _tail: Option<u32>) -> Result<()> { Ok(()) }
     async fn exec(&self, id: &str, cmd: &[String], _env: Option<&HashMap<String, String>>, _workdir: Option<&str>) -> Result<ContainerLogs> {
         self.record(RecordedCall::Exec(id.to_string(), cmd.to_vec()));
         self.pop_response()
@@ -131,5 +131,9 @@ impl ContainerBackend for MockBackend {
     }
     async fn build(&self, _spec: &crate::types::ComposeServiceBuild, _image_name: &str) -> Result<()> {
         Ok(())
+    }
+    async fn inspect_network(&self, name: &str) -> Result<()> {
+        self.record(RecordedCall::InspectNetwork(name.to_string()));
+        self.pop_response()
     }
 }

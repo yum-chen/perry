@@ -1,6 +1,6 @@
 use crate::error::{ComposeError, Result};
 use crate::types::{
-    ContainerHandle, ContainerInfo, ContainerLogs, ContainerSpec, ImageInfo,
+    ContainerHandle, ContainerInfo, ContainerLogs, ContainerSpec, ImageInfo, IsolationLevel,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 use std::time::Duration;
-use std::sync::Arc;
 
 /// Minimal network creation config — driver and labels only.
 #[derive(Debug, Clone, Default)]
@@ -26,13 +25,15 @@ pub struct VolumeConfig {
     pub labels: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub enum ExecutionStrategy {
     CliExec { bin: PathBuf },
     ApiSocket { socket: PathBuf },
-    VmSpawn { config: serde_json::Value },
+    VmSpawn { config: Option<serde_json::Value> },
 }
 
+#[derive(Debug, Clone)]
 pub enum BackendDriver {
     AppleContainer { bin: PathBuf },
     Orbstack { bin: PathBuf },
@@ -45,6 +46,19 @@ pub enum BackendDriver {
 }
 
 impl BackendDriver {
+    pub fn name(&self) -> &'static str {
+        match self {
+            BackendDriver::AppleContainer { .. } => "apple/container",
+            BackendDriver::Orbstack { .. } => "orbstack",
+            BackendDriver::Colima { .. } => "colima",
+            BackendDriver::RancherDesktop { .. } => "rancher-desktop",
+            BackendDriver::Lima { .. } => "lima",
+            BackendDriver::Podman { .. } => "podman",
+            BackendDriver::Nerdctl { .. } => "nerdctl",
+            BackendDriver::Docker { .. } => "docker",
+        }
+    }
+
     pub fn into_backend(self) -> Box<dyn ContainerBackend> {
         match self {
             BackendDriver::AppleContainer { bin } => Box::new(CliBackend::new(bin, AppleContainerProtocol)),
@@ -55,6 +69,19 @@ impl BackendDriver {
             BackendDriver::Podman { bin } => Box::new(CliBackend::new(bin, DockerProtocol)),
             BackendDriver::Nerdctl { bin } => Box::new(CliBackend::new(bin, DockerProtocol)),
             BackendDriver::Docker { bin } => Box::new(CliBackend::new(bin, DockerProtocol)),
+        }
+    }
+
+    pub fn default_isolation_level(&self) -> IsolationLevel {
+        match self {
+            BackendDriver::AppleContainer { .. } => IsolationLevel::Container,
+            BackendDriver::Orbstack { .. } => IsolationLevel::MicroVm,
+            BackendDriver::Colima { .. } => IsolationLevel::MicroVm,
+            BackendDriver::RancherDesktop { .. } => IsolationLevel::Container,
+            BackendDriver::Lima { .. } => IsolationLevel::MicroVm,
+            BackendDriver::Podman { .. } => IsolationLevel::Container,
+            BackendDriver::Nerdctl { .. } => IsolationLevel::Container,
+            BackendDriver::Docker { .. } => IsolationLevel::Container,
         }
     }
 }
@@ -70,7 +97,7 @@ pub struct BackendProbeResult {
 pub trait ContainerBackend: Send + Sync {
     fn backend_name(&self) -> &str;
     fn strategy(&self) -> ExecutionStrategy;
-    fn isolation_level(&self) -> crate::types::IsolationLevel;
+    fn isolation_level(&self) -> IsolationLevel;
 
     async fn check_available(&self) -> Result<()>;
     async fn run(&self, spec: &ContainerSpec) -> Result<ContainerHandle>;
@@ -81,7 +108,6 @@ pub trait ContainerBackend: Send + Sync {
     async fn list(&self, all: bool) -> Result<Vec<ContainerInfo>>;
     async fn inspect(&self, id: &str) -> Result<ContainerInfo>;
     async fn logs(&self, id: &str, tail: Option<u32>) -> Result<ContainerLogs>;
-    async fn logs_follow(&self, id: &str, tail: Option<u32>) -> Result<()>;
     async fn exec(
         &self,
         id: &str,
@@ -89,6 +115,7 @@ pub trait ContainerBackend: Send + Sync {
         env: Option<&HashMap<String, String>>,
         workdir: Option<&str>,
     ) -> Result<ContainerLogs>;
+    async fn build(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Result<()>;
     async fn pull_image(&self, reference: &str) -> Result<()>;
     async fn list_images(&self) -> Result<Vec<ImageInfo>>;
     async fn remove_image(&self, reference: &str, force: bool) -> Result<()>;
@@ -96,7 +123,7 @@ pub trait ContainerBackend: Send + Sync {
     async fn remove_network(&self, name: &str) -> Result<()>;
     async fn create_volume(&self, name: &str, config: &VolumeConfig) -> Result<()>;
     async fn remove_volume(&self, name: &str) -> Result<()>;
-    async fn build(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Result<()>;
+    async fn inspect_network(&self, name: &str) -> Result<()>;
 }
 
 pub trait CliProtocol: Send + Sync {
@@ -186,6 +213,17 @@ pub trait CliProtocol: Send + Sync {
     }
     fn remove_volume_args(&self, name: &str) -> Vec<String> {
         vec!["volume".into(), "rm".into(), name.into()]
+    }
+    fn build_args(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Vec<String> {
+        let mut args = vec!["build".into()];
+        if let Some(ctx) = &spec.context { args.push(ctx.clone()); }
+        if let Some(df) = &spec.dockerfile { args.extend(["-f".into(), df.clone()]); }
+        if let Some(t) = &spec.target { args.extend(["--target".into(), t.clone()]); }
+        args.extend(["-t".into(), image_name.into()]);
+        args
+    }
+    fn inspect_network_args(&self, name: &str) -> Vec<String> {
+        vec!["network".into(), "inspect".into(), name.into()]
     }
 
     fn parse_list_output(&self, stdout: &str) -> Result<Vec<ContainerInfo>> {
@@ -350,23 +388,6 @@ impl<P: CliProtocol> CliBackend<P> {
             })
         }
     }
-
-    async fn exec_follow(&self, subcommand_args: Vec<String>) -> Result<()> {
-        let mut cmd = Command::new(&self.bin);
-        if let Some(prefix) = self.protocol.subcommand_prefix() {
-            cmd.args(prefix);
-        }
-        let mut child = cmd.args(subcommand_args).spawn().map_err(ComposeError::IoError)?;
-        let status = child.wait().await.map_err(ComposeError::IoError)?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(ComposeError::BackendError {
-                code: status.code().unwrap_or(-1),
-                message: "Command failed".into(),
-            })
-        }
-    }
 }
 
 #[async_trait]
@@ -377,8 +398,8 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
     fn strategy(&self) -> ExecutionStrategy {
         ExecutionStrategy::CliExec { bin: self.bin.clone() }
     }
-    fn isolation_level(&self) -> crate::types::IsolationLevel {
-        crate::types::IsolationLevel::Container
+    fn isolation_level(&self) -> IsolationLevel {
+        IsolationLevel::Container
     }
     async fn check_available(&self) -> Result<()> {
         let mut cmd = Command::new(&self.bin);
@@ -412,12 +433,12 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
         let (stdout, stderr) = self.exec_raw(self.protocol.logs_args(id, tail, false)).await?;
         Ok(ContainerLogs { stdout, stderr })
     }
-    async fn logs_follow(&self, id: &str, tail: Option<u32>) -> Result<()> {
-        self.exec_follow(self.protocol.logs_args(id, tail, true)).await
-    }
     async fn exec(&self, id: &str, cmd: &[String], env: Option<&HashMap<String, String>>, workdir: Option<&str>) -> Result<ContainerLogs> {
         let (stdout, stderr) = self.exec_raw(self.protocol.exec_args(id, cmd, env, workdir)).await?;
         Ok(ContainerLogs { stdout, stderr })
+    }
+    async fn build(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Result<()> {
+        self.exec_raw(self.protocol.build_args(spec, image_name)).await.map(|_| ())
     }
     async fn pull_image(&self, reference: &str) -> Result<()> { self.exec_raw(self.protocol.pull_image_args(reference)).await.map(|_| ()) }
     async fn list_images(&self) -> Result<Vec<ImageInfo>> {
@@ -429,10 +450,45 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
     async fn remove_network(&self, name: &str) -> Result<()> { self.exec_raw(self.protocol.remove_network_args(name)).await.map(|_| ()) }
     async fn create_volume(&self, name: &str, config: &VolumeConfig) -> Result<()> { self.exec_raw(self.protocol.create_volume_args(name, config)).await.map(|_| ()) }
     async fn remove_volume(&self, name: &str) -> Result<()> { self.exec_raw(self.protocol.remove_volume_args(name)).await.map(|_| ()) }
-    async fn build(&self, _spec: &crate::types::ComposeServiceBuild, _image_name: &str) -> Result<()> {
-        // TODO: implement build
-        Ok(())
+    async fn inspect_network(&self, name: &str) -> Result<()> { self.exec_raw(self.protocol.inspect_network_args(name)).await.map(|_| ()) }
+}
+
+pub async fn detect_backend() -> std::result::Result<Box<dyn ContainerBackend>, Vec<BackendProbeResult>> {
+    if let Ok(name) = std::env::var("PERRY_CONTAINER_BACKEND") {
+        return probe_candidate(&name).await.map_err(|reason| {
+            vec![BackendProbeResult {
+                name: name.clone(),
+                available: false,
+                reason,
+            }]
+        });
     }
+
+    let mode = std::env::var("PERRY_CONTAINER_MODE").unwrap_or_else(|_| "local-first".to_string());
+
+    let candidates = platform_candidates();
+    let mut results = Vec::new();
+
+    if mode == "server-first" {
+        // In a real implementation we would probe for remote sockets first.
+    }
+
+    for candidate in candidates {
+        match tokio::time::timeout(Duration::from_secs(2), probe_candidate(candidate)).await {
+            Ok(Ok(backend)) => return Ok(backend),
+            Ok(Err(reason)) => results.push(BackendProbeResult {
+                name: candidate.to_string(),
+                available: false,
+                reason,
+            }),
+            Err(_) => results.push(BackendProbeResult {
+                name: candidate.to_string(),
+                available: false,
+                reason: "probe timed out".into(),
+            }),
+        }
+    }
+    Err(results)
 }
 
 pub async fn probe_all_candidates() -> Vec<BackendProbeResult> {
@@ -459,42 +515,6 @@ pub async fn probe_all_candidates() -> Vec<BackendProbeResult> {
         }
     }
     results
-}
-
-pub async fn detect_backend() -> std::result::Result<Box<dyn ContainerBackend>, Vec<BackendProbeResult>> {
-    if let Ok(name) = std::env::var("PERRY_CONTAINER_BACKEND") {
-        return probe_candidate(&name).await.map_err(|reason| {
-            vec![BackendProbeResult {
-                name: name.clone(),
-                available: false,
-                reason,
-            }]
-        });
-    }
-
-    let mode = std::env::var("PERRY_CONTAINER_MODE").unwrap_or_else(|_| "local-first".to_string());
-    // In a real implementation, server-first would prioritize remote sockets.
-    // For now, we follow platform priority.
-
-    let candidates = platform_candidates();
-    let mut results = Vec::new();
-
-    for candidate in candidates {
-        match tokio::time::timeout(Duration::from_secs(2), probe_candidate(candidate)).await {
-            Ok(Ok(backend)) => return Ok(backend),
-            Ok(Err(reason)) => results.push(BackendProbeResult {
-                name: candidate.to_string(),
-                available: false,
-                reason,
-            }),
-            Err(_) => results.push(BackendProbeResult {
-                name: candidate.to_string(),
-                available: false,
-                reason: "probe timed out".into(),
-            }),
-        }
-    }
-    Err(results)
 }
 
 fn platform_candidates() -> &'static [&'static str] {

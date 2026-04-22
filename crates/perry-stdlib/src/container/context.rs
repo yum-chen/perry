@@ -3,11 +3,12 @@ use perry_container_compose::backend::{detect_backend, ContainerBackend};
 use dashmap::DashMap;
 use std::any::Any;
 use tokio::sync::Mutex;
-
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct ContainerContext {
+    /// Requirement 4.6: tokio::sync::Mutex for async double-checked init
     backend: Mutex<Option<Arc<dyn ContainerBackend>>>,
+    /// Task 12: DashMap handle registry
     pub handles: DashMap<u64, Box<dyn Any + Send + Sync>>,
     next_handle_id: AtomicU64,
 }
@@ -56,16 +57,16 @@ impl ContainerContext {
                 Ok(shared)
             }
             Err(e) => {
-                // Try installer if TTY
+                // Requirement 20: Installer invocation
                 let installer = perry_container_compose::installer::BackendInstaller::new();
-                if installer.is_tty {
-                    if let Ok(b) = installer.run().await {
-                        let shared = Arc::from(b.into_backend());
-                        *lock = Some(Arc::clone(&shared));
-                        return Ok(shared);
+                match installer.run().await {
+                    Ok(driver) => {
+                        let backend = Arc::from(driver.into_backend());
+                        *lock = Some(Arc::clone(&backend));
+                        Ok(backend)
                     }
+                    Err(_) => Err(format!("No backend found: {:?}", e)),
                 }
-                Err(format!("No backend found: {:?}", e))
             }
         }
     }
