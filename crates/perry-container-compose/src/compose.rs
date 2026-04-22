@@ -199,10 +199,21 @@ impl ComposeEngine {
                     started.push(container_name);
                 }
                 Err(e) => {
-                    // Rollback
+                    // Rollback: stop and remove containers
                     for name in started.iter().rev() {
                         let _ = self.backend.stop(name, Some(10)).await;
                         let _ = self.backend.remove(name, true).await;
+                    }
+                    // Best-effort rollback of networks and volumes
+                    if let Some(networks) = &self.spec.networks {
+                        for name in networks.keys() {
+                            let _ = self.backend.remove_network(name).await;
+                        }
+                    }
+                    if let Some(volumes) = &self.spec.volumes {
+                        for name in volumes.keys() {
+                            let _ = self.backend.remove_volume(name).await;
+                        }
                     }
                     return Err(ComposeError::ServiceStartupFailed {
                         service: svc_name.clone(),
@@ -267,8 +278,10 @@ impl ComposeEngine {
         &self,
         services: &[String],
         tail: Option<u32>,
-    ) -> Result<HashMap<String, String>> {
-        let mut all_logs = HashMap::new();
+    ) -> Result<ContainerLogs> {
+        let mut all_stdout = String::new();
+        let mut all_stderr = String::new();
+
         let target: Vec<&String> = if services.is_empty() {
             self.spec.services.keys().collect()
         } else {
@@ -279,10 +292,18 @@ impl ComposeEngine {
             let svc = self.spec.services.get(svc_name).unwrap();
             let container_name = service::service_container_name(svc, svc_name);
             if let Ok(logs) = self.backend.logs(&container_name, tail).await {
-                all_logs.insert(svc_name.clone(), format!("STDOUT:\n{}\nSTDERR:\n{}", logs.stdout, logs.stderr));
+                if !all_stdout.is_empty() { all_stdout.push('\n'); }
+                if !all_stderr.is_empty() { all_stderr.push('\n'); }
+
+                all_stdout.push_str(&format!("{}: {}", svc_name, logs.stdout));
+                all_stderr.push_str(&format!("{}: {}", svc_name, logs.stderr));
             }
         }
-        Ok(all_logs)
+
+        Ok(ContainerLogs {
+            stdout: all_stdout,
+            stderr: all_stderr,
+        })
     }
 
     pub async fn exec(
@@ -332,6 +353,10 @@ impl ComposeEngine {
     pub async fn restart(&self, services: &[String]) -> Result<()> {
         self.stop(services).await?;
         self.start(services).await
+    }
+
+    pub fn resolve_startup_order(&self) -> Result<Vec<String>> {
+        resolve_startup_order(&self.spec)
     }
 
     pub fn graph(&self) -> Result<ServiceGraph> {

@@ -632,7 +632,9 @@ pub struct BackendInfo {
 // ============ Container types (for single-container API) ============
 
 /// Specification for running a single container.
+/// Canonical fields from SPEC.md §2.3.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ContainerSpec {
     pub image: String,
     pub name: Option<String>,
@@ -664,6 +666,7 @@ pub struct ContainerInfo {
     pub status: String,
     pub ports: Vec<String>,
     pub created: String,
+    pub ip: Option<String>,
 }
 
 /// Logs from a container.

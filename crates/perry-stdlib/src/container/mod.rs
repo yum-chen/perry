@@ -364,6 +364,36 @@ pub unsafe extern "C" fn js_container_exec(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn js_container_build(
+    spec_json: *const StringHeader,
+    image_name_ptr: *const StringHeader,
+) -> *mut Promise {
+    let promise = js_promise_new();
+    let spec: perry_container_compose::types::ComposeServiceBuild =
+        match string_from_header(spec_json).and_then(|s| serde_json::from_str(&s).ok()) {
+            Some(s) => s,
+            None => {
+                crate::common::spawn_for_promise(promise as *mut u8, async move {
+                    Err::<u64, String>("Invalid build spec JSON".to_string())
+                });
+                return promise;
+            }
+        };
+    let image_name = string_from_header(image_name_ptr).unwrap_or_default();
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        ContainerContext::global()
+            .get_backend()
+            .await?
+            .build(&spec, &image_name)
+            .await
+            .map(|_| 0u64)
+            .map_err(|e| e.to_string())
+    });
+    promise
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn js_container_pullImage(image_ptr: *const StringHeader) -> *mut Promise {
     let promise = js_promise_new();
     let image = string_from_header(image_ptr).unwrap_or_default();
@@ -399,18 +429,12 @@ pub unsafe extern "C" fn js_container_removeImage(image_ptr: *const StringHeader
 
 #[no_mangle]
 pub unsafe extern "C" fn js_container_getBackend() -> *const StringHeader {
-    static BACKEND_NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-
-    let name = BACKEND_NAME.get_or_init(|| {
-        crate::common::block_on(async {
-            ContainerContext::global()
-                .get_backend()
-                .await
-                .map(|b| b.backend_name().to_string())
-                .unwrap_or_else(|_| "unknown".to_string())
-        })
-    });
-    string_to_js(name)
+    let name = if let Some(backend) = ContainerContext::global().backend.blocking_lock().as_ref() {
+        backend.backend_name().to_string()
+    } else {
+        "unknown".to_string()
+    };
+    string_to_js(&name)
 }
 
 // ============ Compose Functions ============
@@ -498,11 +522,7 @@ pub unsafe extern "C" fn js_container_compose_logs(
             if let Some(engine) = perry_container_compose::ComposeEngine::get_engine(h.stack_id) {
                 match engine.logs(&services, t).await {
                     Ok(logs) => {
-                        let combined = logs.values().cloned().collect::<Vec<_>>().join("\n");
-                        Ok(types::register_container_logs(types::ContainerLogs {
-                            stdout: combined,
-                            stderr: String::new(),
-                        }))
+                        Ok(types::register_container_logs(logs))
                     }
                     Err(e) => Err::<u64, String>(e.to_string()),
                 }
@@ -707,8 +727,18 @@ pub unsafe extern "C" fn js_workload_runGraph(
             for (k, v) in node.env {
                 let val = match v {
                     workload::WorkloadEnvValue::Literal(s) => Some(serde_yaml::Value::String(s)),
-                    workload::WorkloadEnvValue::Ref(_) => {
-                        Some(serde_yaml::Value::String("PENDING_REF".into()))
+                    workload::WorkloadEnvValue::Ref(r) => {
+                        // In OCI, service names are hostnames.
+                        match r.projection {
+                            workload::RefProjection::Ip => Some(serde_yaml::Value::String(r.node_id)),
+                            workload::RefProjection::Endpoint => {
+                                let port = r.port.unwrap_or_else(|| "80".to_string());
+                                Some(serde_yaml::Value::String(format!("{}:{}", r.node_id, port)))
+                            }
+                            workload::RefProjection::InternalUrl => {
+                                Some(serde_yaml::Value::String(format!("http://{}", r.node_id)))
+                            }
+                        }
                     }
                 };
                 env.insert(k, val);

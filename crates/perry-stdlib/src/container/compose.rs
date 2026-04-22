@@ -40,12 +40,8 @@ impl ComposeWrapper {
 
     pub async fn logs(&self, service: Option<&str>, tail: Option<u32>) -> Result<ContainerLogs, ContainerError> {
         let services = service.map(|s| vec![s.to_string()]).unwrap_or_default();
-        let logs_map = self.engine.logs(&services, tail).await.map_err(ContainerError::from)?;
-        let combined = logs_map.values().cloned().collect::<Vec<_>>().join("\n");
-        Ok(ContainerLogs {
-            stdout: combined,
-            stderr: String::new(),
-        })
+        let logs = self.engine.logs(&services, tail).await.map_err(ContainerError::from)?;
+        Ok(logs)
     }
 
     pub async fn exec(&self, service: &str, cmd: &[String]) -> Result<ContainerLogs, ContainerError> {

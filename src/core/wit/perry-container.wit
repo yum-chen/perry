@@ -48,7 +48,15 @@ interface container {
         isolation-level: string,
     }
 
+    record build-spec {
+        context: option<string>,
+        dockerfile: option<string>,
+        dockerfile-inline: option<string>,
+        args: option<list<tuple<string, string>>>,
+    }
+
     run: func(spec: container-spec) -> result<container-handle, string>;
+    build: func(spec-json: string, image-name: string) -> result<_, string>;
     create: func(spec: container-spec) -> result<container-handle, string>;
     start: func(id: string) -> result<_, string>;
     stop: func(id: string, timeout: option<u32>) -> result<_, string>;

@@ -332,7 +332,7 @@ proptest! {
     #[test]
     fn prop_yaml_round_trip(spec in arb_compose_spec()) {
         let yaml = serde_yaml::to_string(&spec).unwrap();
-        let reparsed: ComposeSpec = ComposeSpec::parse_str(&yaml).unwrap();
+        let reparsed: ComposeSpec = serde_yaml::from_str(&yaml).unwrap();
 
         // Service names preserved
         prop_assert_eq!(

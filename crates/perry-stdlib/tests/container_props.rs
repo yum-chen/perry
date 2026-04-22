@@ -9,9 +9,11 @@
 //! which are the actual types exposed through the FFI boundary.
 
 use perry_stdlib::container::types::*;
+use perry_container_compose::types::{DependsOnCondition, DependsOnSpec};
 use proptest::prelude::*;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use indexmap::IndexMap;
 
 // ============ Property 2: ContainerSpec CLI argument round-trip ============
 // Feature: perry-container, Property 2: ContainerSpec CLI argument round-trip
@@ -131,18 +133,18 @@ proptest! {
 
     #[test]
     fn prop_list_or_dict_to_map_dict(
-        keys in proptest::collection::vec("[A-Z][A-Z0-9_]{1,8}", 1..=8),
+        keys in proptest::collection::btree_set("[A-Z][A-Z0-9_]{1,8}", 1..=8),
         int_val in 0i64..1000,
         bool_val in proptest::bool::ANY,
         str_val in "[a-z0-9_]{1,10}",
     ) {
-        let mut map = HashMap::new();
+        let mut map = IndexMap::new();
         // Mix different value types across keys
         for (i, key) in keys.iter().enumerate() {
-            let val: Option<serde_json::Value> = match i % 4 {
-                0 => Some(serde_json::Value::String(str_val.clone())),
-                1 => Some(serde_json::Value::Number(int_val.into())),
-                2 => Some(serde_json::Value::Bool(bool_val)),
+            let val: Option<serde_yaml::Value> = match i % 4 {
+                0 => Some(serde_yaml::Value::String(str_val.clone())),
+                1 => Some(serde_yaml::Value::Number(int_val.into())),
+                2 => Some(serde_yaml::Value::Bool(bool_val)),
                 _ => None, // Null
             };
             map.insert(key.clone(), val);
@@ -216,40 +218,41 @@ proptest! {
     }
 }
 
-// ============ Property: ComposeDependsOnEntry service_names — List vs Map ============
+// ============ Property: DependsOnSpec service_names — List vs Map ============
 // Validates: Both List and Map variants produce the same set of service names.
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
 
     #[test]
-    fn prop_depends_on_entry_service_names(
+    fn prop_depends_on_spec_service_names(
         names in proptest::collection::vec("[a-z][a-z0-9_-]{1,10}", 1..=6),
     ) {
         // List variant
-        let list_entry = ComposeDependsOnEntry::List(names.clone());
-        let list_names = list_entry.service_names();
+        let list_spec = DependsOnSpec::List(names.clone());
+        let list_names = list_spec.service_names();
 
         // Map variant (same keys)
-        let mut map = HashMap::new();
+        let mut map = IndexMap::new();
         for name in &names {
             map.insert(
                 name.clone(),
                 ComposeDependsOn {
-                    condition: "service_started".to_string(),
+                    condition: DependsOnCondition::ServiceStarted,
                     required: None,
                     restart: None,
                 },
             );
         }
-        let map_entry = ComposeDependsOnEntry::Map(map);
-        let map_names = map_entry.service_names();
+        let map_spec = DependsOnSpec::Map(map);
+        let map_names = map_spec.service_names();
 
         // Both should yield the same service names (order may differ for Map)
         prop_assert_eq!(list_names.len(), map_names.len());
-        for name in &list_names {
-            prop_assert!(map_names.contains(name), "map should contain {}", name);
-        }
+
+        let list_set: std::collections::HashSet<_> = list_names.into_iter().collect();
+        let map_set: std::collections::HashSet<_> = map_names.into_iter().collect();
+        prop_assert_eq!(list_set, map_set);
     }
 }
 
@@ -275,13 +278,13 @@ proptest! {
                 image: msg.clone(),
                 reason: "test reason".to_string(),
             },
-            3 => ContainerError::DependencyCycle {
-                cycle: vec![msg.clone()],
-            },
-            4 => ContainerError::ServiceStartupFailed {
+            3 => ContainerError::Compose(perry_container_compose::ComposeError::DependencyCycle {
+                services: vec![msg.clone()],
+            }),
+            4 => ContainerError::Compose(perry_container_compose::ComposeError::ServiceStartupFailed {
                 service: msg.clone(),
-                error: "test error".to_string(),
-            },
+                message: "test error".to_string(),
+            }),
             _ => ContainerError::InvalidConfig(msg.clone()),
         };
 
@@ -363,12 +366,13 @@ proptest! {
                 status: "running".to_string(),
                 ports: vec![],
                 created: "2025-01-01T00:00:00Z".to_string(),
+                ip: None,
             })
             .collect();
 
         let h = register_container_info_list(infos.clone());
         let taken: Option<Vec<ContainerInfo>> =
-            take_container_info_list(h);
+            perry_stdlib::common::handle::get_handle(h as i64).cloned();
         prop_assert!(taken.is_some());
         let taken = taken.unwrap();
         prop_assert_eq!(taken.len(), infos.len());
@@ -384,7 +388,7 @@ proptest! {
         };
         let lh = register_container_logs(logs);
         let taken_logs: Option<ContainerLogs> =
-            take_container_logs(lh);
+            perry_stdlib::common::handle::get_handle(lh as i64).cloned();
         prop_assert!(taken_logs.is_some());
         let taken_logs = taken_logs.unwrap();
         prop_assert_eq!(taken_logs.stdout, stdout);

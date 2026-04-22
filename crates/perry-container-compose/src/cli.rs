@@ -145,15 +145,9 @@ pub async fn run(cli: Cli) -> Result<()> {
             print_ps_table(&infos);
         }
         Commands::Logs(args) => {
-            let logs_map = engine.logs(&args.services, args.tail).await?;
-            let mut names: Vec<&String> = logs_map.keys().collect();
-            names.sort();
-            for name in names {
-                let log = &logs_map[name];
-                for line in log.lines() {
-                    println!("{:<12} | {}", name, line);
-                }
-            }
+            let logs = engine.logs(&args.services, args.tail).await?;
+            print!("{}", logs.stdout);
+            eprint!("{}", logs.stderr);
         }
         Commands::Exec(args) => {
             let mut env_map = HashMap::new();
