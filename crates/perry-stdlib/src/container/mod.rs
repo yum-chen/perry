@@ -80,6 +80,38 @@ pub unsafe extern "C" fn js_container_run(spec_ptr: *const StringHeader) -> *mut
     promise
 }
 
+/// Build a container image
+/// FFI: js_container_build(spec_json: *const StringHeader, image_name: *const StringHeader) -> *mut Promise
+#[no_mangle]
+pub unsafe extern "C" fn js_container_build(
+    spec_ptr: *const StringHeader,
+    image_name_ptr: *const StringHeader,
+) -> *mut Promise {
+    let promise = js_promise_new();
+
+    let spec_json = string_from_header(spec_ptr);
+    let image_name = string_from_header(image_name_ptr);
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let spec: perry_container_compose::types::ComposeServiceBuild = spec_json
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .ok_or_else(|| "Invalid build spec".to_string())?;
+
+        let name = image_name.ok_or_else(|| "Invalid image name".to_string())?;
+
+        let backend = match get_global_backend().await {
+            Ok(b) => Arc::clone(b),
+            Err(e) => return Err::<u64, String>(e.to_string()),
+        };
+        match backend.build(&spec, &name).await {
+            Ok(()) => Ok(0u64),
+            Err(e) => Err::<u64, String>(e.to_string()),
+        }
+    });
+
+    promise
+}
+
 /// Create a container from the given spec without starting it
 /// FFI: js_container_create(spec_json: *const StringHeader) -> *mut Promise
 #[no_mangle]
