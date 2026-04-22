@@ -113,14 +113,20 @@ impl ComposeEngine {
                 }
                 let net_config = net_config_opt.as_ref().cloned().unwrap_or_default();
                 let resolved_name = net_config.name.as_deref().unwrap_or(net_name.as_str());
-                tracing::info!("Creating network '{}'…", resolved_name);
-                self.backend
-                    .create_network(resolved_name, &net_config)
-                    .await
-                    .map_err(|e| ComposeError::ServiceStartupFailed {
-                        service: format!("network/{}", net_name),
-                        message: e.to_string(),
-                    })?;
+
+                // Check if network already exists
+                if self.backend.inspect_network(resolved_name).await.is_err() {
+                    tracing::info!("Creating network '{}'…", resolved_name);
+                    self.backend
+                        .create_network(resolved_name, &net_config)
+                        .await
+                        .map_err(|e| ComposeError::ServiceStartupFailed {
+                            service: format!("network/{}", net_name),
+                            message: e.to_string(),
+                        })?;
+                } else {
+                    tracing::info!("Network '{}' already exists, skipping creation", resolved_name);
+                }
             }
         }
 

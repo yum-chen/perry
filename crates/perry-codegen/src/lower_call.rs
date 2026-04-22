@@ -4589,7 +4589,7 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
         runtime: "js_compose_stop", args: &[NA_F64], ret: NR_PTR },
     NativeModSig { module: "perry/container", has_receiver: true, method: "exec",
         class_filter: Some("ComposeHandle"),
-        runtime: "js_compose_exec", args: &[NA_STR, NA_PTR], ret: NR_PTR },
+        runtime: "js_compose_exec", args: &[NA_STR, NA_F64], ret: NR_PTR },
 
     // perry/compose legacy dispatch
     NativeModSig { module: "perry/compose", has_receiver: false, method: "js_compose_start",

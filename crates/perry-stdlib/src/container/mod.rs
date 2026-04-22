@@ -666,12 +666,12 @@ pub unsafe extern "C" fn js_compose_logs(
 }
 
 /// Execute command in compose service
-/// FFI: js_compose_exec(handle_id: i64, service: *const StringHeader, cmd_json: *const StringHeader) -> *mut Promise
+/// FFI: js_compose_exec(handle_id: i64, service: *const StringHeader, cmd_val: f64) -> *mut Promise
 #[no_mangle]
 pub unsafe extern "C" fn js_compose_exec(
     handle_id: i64,
     service_ptr: *const StringHeader,
-    cmd_json_ptr: *const StringHeader,
+    cmd_val: f64,
 ) -> *mut Promise {
     let promise = js_promise_new();
 
@@ -686,6 +686,7 @@ pub unsafe extern "C" fn js_compose_exec(
     };
 
     let service_opt = string_from_header(service_ptr);
+    let cmd_json_ptr = perry_runtime::json::js_json_stringify(cmd_val, 0);
     let cmd_json = string_from_header(cmd_json_ptr);
 
     crate::common::spawn_for_promise(promise as *mut u8, async move {

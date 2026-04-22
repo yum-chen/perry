@@ -43,6 +43,7 @@ pub trait ContainerBackend: Send + Sync {
     async fn remove_network(&self, name: &str) -> Result<()>;
     async fn create_volume(&self, name: &str, config: &ComposeVolume) -> Result<()>;
     async fn remove_volume(&self, name: &str) -> Result<()>;
+    async fn inspect_network(&self, name: &str) -> Result<()>;
 }
 
 pub trait CliProtocol: Send + Sync {
@@ -64,6 +65,7 @@ pub trait CliProtocol: Send + Sync {
     fn remove_network_args(&self, name: &str) -> Vec<String>;
     fn create_volume_args(&self, name: &str, config: &ComposeVolume) -> Vec<String>;
     fn remove_volume_args(&self, name: &str) -> Vec<String>;
+    fn inspect_network_args(&self, name: &str) -> Vec<String>;
 
     fn parse_list_output(&self, stdout: &str) -> Result<Vec<ContainerInfo>>;
     fn parse_inspect_output(&self, stdout: &str) -> Result<ContainerInfo>;
@@ -256,6 +258,10 @@ impl CliProtocol for DockerProtocol {
         vec!["volume".into(), "rm".into(), name.into()]
     }
 
+    fn inspect_network_args(&self, name: &str) -> Vec<String> {
+        vec!["network".into(), "inspect".into(), name.into()]
+    }
+
     fn parse_list_output(&self, stdout: &str) -> Result<Vec<ContainerInfo>> {
         let entries: Vec<DockerListEntry> = stdout.lines()
             .filter_map(|l| serde_json::from_str(l).ok())
@@ -332,6 +338,7 @@ impl CliProtocol for AppleContainerProtocol {
     fn remove_network_args(&self, name: &str) -> Vec<String> { DockerProtocol.remove_network_args(name) }
     fn create_volume_args(&self, name: &str, config: &ComposeVolume) -> Vec<String> { DockerProtocol.create_volume_args(name, config) }
     fn remove_volume_args(&self, name: &str) -> Vec<String> { DockerProtocol.remove_volume_args(name) }
+    fn inspect_network_args(&self, name: &str) -> Vec<String> { DockerProtocol.inspect_network_args(name) }
     fn parse_list_output(&self, stdout: &str) -> Result<Vec<ContainerInfo>> { DockerProtocol.parse_list_output(stdout) }
     fn parse_inspect_output(&self, stdout: &str) -> Result<ContainerInfo> { DockerProtocol.parse_inspect_output(stdout) }
     fn parse_list_images_output(&self, stdout: &str) -> Result<Vec<ImageInfo>> { DockerProtocol.parse_list_images_output(stdout) }
@@ -421,6 +428,11 @@ impl CliProtocol for LimaProtocol {
     fn remove_volume_args(&self, name: &str) -> Vec<String> {
         let mut args = vec!["shell".into(), self.instance.clone(), "nerdctl".into()];
         args.extend(DockerProtocol.remove_volume_args(name));
+        args
+    }
+    fn inspect_network_args(&self, name: &str) -> Vec<String> {
+        let mut args = vec!["shell".into(), self.instance.clone(), "nerdctl".into()];
+        args.extend(DockerProtocol.inspect_network_args(name));
         args
     }
     fn parse_list_output(&self, stdout: &str) -> Result<Vec<ContainerInfo>> { DockerProtocol.parse_list_output(stdout) }
@@ -561,6 +573,11 @@ impl ContainerBackend for CliBackend {
 
     async fn remove_volume(&self, name: &str) -> Result<()> {
         let args = self.protocol.remove_volume_args(name);
+        self.exec_raw(&args).await.map(|_| ())
+    }
+
+    async fn inspect_network(&self, name: &str) -> Result<()> {
+        let args = self.protocol.inspect_network_args(name);
         self.exec_raw(&args).await.map(|_| ())
     }
 }
