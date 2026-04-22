@@ -15,6 +15,7 @@ pub mod compose;
 pub mod backend;
 pub mod cli;
 pub mod config;
+pub mod workload;
 
 #[cfg(feature = "ffi")]
 pub mod ffi;

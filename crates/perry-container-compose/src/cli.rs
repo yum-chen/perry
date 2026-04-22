@@ -7,6 +7,7 @@ use crate::error::Result;
 use crate::project::ComposeProject;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// perry-compose: Docker Compose-like experience for Apple Container / Podman
 #[derive(Parser, Debug)]
@@ -128,9 +129,8 @@ pub async fn run(cli: Cli) -> Result<()> {
     );
     let project = ComposeProject::load(&config)?;
     let backend = crate::backend::detect_backend()
-        .await
-        .map_err(|probed| crate::error::ComposeError::NoBackendFound { probed })?;
-    let engine = ComposeEngine::new(project.spec.clone(), project.project_name.clone(), backend);
+        .await?;
+    let engine = ComposeEngine::new(project.spec.clone(), project.project_name.clone(), Arc::from(backend));
 
     match cli.command {
         Commands::Up(args) => {
@@ -163,22 +163,12 @@ pub async fn run(cli: Cli) -> Result<()> {
         }
 
         Commands::Logs(args) => {
-            let logs_map = engine.logs(&args.services, args.tail).await?;
-
-            let mut names: Vec<&String> = logs_map.keys().collect();
-            names.sort();
-            for name in names {
-                let log = &logs_map[name];
-                if !log.stdout.is_empty() {
-                    for line in log.stdout.lines() {
-                        println!("{} | {}", name, line);
-                    }
-                }
-                if !log.stderr.is_empty() {
-                    for line in log.stderr.lines() {
-                        eprintln!("{} | {}", name, line);
-                    }
-                }
+            let logs = engine.logs(&args.services, args.tail).await?;
+            if !logs.stdout.is_empty() {
+                println!("{}", logs.stdout);
+            }
+            if !logs.stderr.is_empty() {
+                eprintln!("{}", logs.stderr);
             }
         }
 

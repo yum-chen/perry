@@ -2,8 +2,7 @@
 
 use perry_runtime::StringHeader;
 use serde::{Deserialize, Serialize};
-
-use crate::common::handle::{self, Handle};
+use crate::container::context::{ContainerContext, HandleEntry};
 
 // Re-export core types from the compose crate to avoid duplication and mismatch.
 pub use perry_container_compose::types::{
@@ -14,84 +13,52 @@ pub use perry_container_compose::types::{
 // ============ Handle Registry ============
 
 pub fn register_container_handle(h: ContainerHandle) -> u64 {
-    handle::register_handle(h) as u64
-}
-
-pub fn get_container_handle(id: u64) -> Option<Handle> {
-    let h = id as Handle;
-    if handle::handle_exists(h) {
-        Some(h)
-    } else {
-        None
-    }
+    ContainerContext::global().register_handle(HandleEntry::Container(h))
 }
 
 pub fn register_container_info(info: ContainerInfo) -> u64 {
-    handle::register_handle(info) as u64
+    ContainerContext::global().register_handle(HandleEntry::Info(info))
 }
 
 pub fn register_container_info_list(list: Vec<ContainerInfo>) -> u64 {
-    handle::register_handle(list) as u64
-}
-
-pub fn with_container_info_list<R>(id: u64, f: impl FnOnce(&Vec<ContainerInfo>) -> R) -> Option<R> {
-    handle::with_handle(id as Handle, f)
+    ContainerContext::global().register_handle(HandleEntry::InfoList(list))
 }
 
 pub fn take_container_info_list(id: u64) -> Option<Vec<ContainerInfo>> {
-    handle::take_handle(id as Handle)
+    match ContainerContext::global().take_handle(id) {
+        Some(HandleEntry::InfoList(list)) => Some(list),
+        _ => None,
+    }
 }
 
 pub fn register_compose_handle(h: ComposeHandle) -> u64 {
-    handle::register_handle(h) as u64
-}
-
-pub fn get_compose_handle(id: u64) -> Option<&'static ComposeHandle> {
-    handle::get_handle(id as Handle)
-}
-
-pub fn take_compose_handle(id: u64) -> Option<ComposeHandle> {
-    handle::take_handle(id as Handle)
-}
-
-pub fn register_compose_wrapper(w: crate::container::compose::ComposeWrapper) -> u64 {
-    handle::register_handle(w) as u64
-}
-
-pub fn get_compose_wrapper(id: u64) -> Option<&'static crate::container::compose::ComposeWrapper> {
-    handle::get_handle(id as Handle)
-}
-
-pub fn take_compose_wrapper(id: u64) -> Option<crate::container::compose::ComposeWrapper> {
-    handle::take_handle(id as Handle)
+    ContainerContext::global().register_handle(HandleEntry::Compose(h))
 }
 
 pub fn register_container_logs(logs: ContainerLogs) -> u64 {
-    handle::register_handle(logs) as u64
-}
-
-pub fn with_container_logs<R>(id: u64, f: impl FnOnce(&ContainerLogs) -> R) -> Option<R> {
-    handle::with_handle(id as Handle, f)
+    ContainerContext::global().register_handle(HandleEntry::Logs(logs))
 }
 
 pub fn take_container_logs(id: u64) -> Option<ContainerLogs> {
-    handle::take_handle(id as Handle)
+    match ContainerContext::global().take_handle(id) {
+        Some(HandleEntry::Logs(logs)) => Some(logs),
+        _ => None,
+    }
 }
 
 pub fn register_image_info_list(list: Vec<ImageInfo>) -> u64 {
-    handle::register_handle(list) as u64
-}
-
-pub fn with_image_info_list<R>(id: u64, f: impl FnOnce(&Vec<ImageInfo>) -> R) -> Option<R> {
-    handle::with_handle(id as Handle, f)
+    ContainerContext::global().register_handle(HandleEntry::ImageList(list))
 }
 
 pub fn take_image_info_list(id: u64) -> Option<Vec<ImageInfo>> {
-    handle::take_handle(id as Handle)
+    match ContainerContext::global().take_handle(id) {
+        Some(HandleEntry::ImageList(list)) => Some(list),
+        _ => None,
+    }
 }
 
 pub fn drop_container_handle(id: u64) -> bool {
-    handle::drop_handle(id as Handle)
+    ContainerContext::global().take_handle(id).is_some()
 }
 
 // ============ Error Types ============
@@ -117,7 +84,7 @@ pub enum ContainerError {
     },
     InvalidConfig(String),
     NoBackendFound {
-        probed: Vec<crate::container::backend::BackendProbeResult>,
+        probed: Vec<perry_container_compose::error::BackendProbeResult>,
     },
     BackendNotAvailable {
         name: String,
