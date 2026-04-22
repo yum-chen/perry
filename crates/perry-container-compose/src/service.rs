@@ -1,3 +1,4 @@
+use crate::error::Result;
 use md5::{Digest, Md5};
 
 pub fn service_container_name(service: &crate::types::ComposeService, service_name: &str) -> String {
