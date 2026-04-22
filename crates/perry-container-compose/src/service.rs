@@ -11,6 +11,7 @@ pub fn generate_name(image: &str, service_name: &str) -> String {
     let random_suffix: u32 = rand::random();
 
     // Sanitize service name: replace non-alphanumeric (except hyphen) with underscore
+    // Requirement 6.13: replace non-alphanumeric (except hyphen) with underscore
     let safe_name: String = service_name
         .chars()
         .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })

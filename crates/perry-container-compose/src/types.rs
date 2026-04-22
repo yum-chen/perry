@@ -155,8 +155,7 @@ pub struct ComposeServiceVolume {
 pub struct ComposeServiceVolumeBind {
     pub propagation: Option<String>,
     pub create_host_path: Option<bool>,
-    #[serde(rename = "recursive")]
-    pub recursive_opt: Option<String>,
+    pub recursive: Option<String>,
     pub selinux: Option<String>,
 }
 

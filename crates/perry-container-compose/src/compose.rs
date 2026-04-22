@@ -234,6 +234,8 @@ impl ComposeEngine {
         for n_name in networks {
             let _ = self.backend.remove_network(n_name).await;
         }
+        // Requirement 6.10: rollback skip volumes that were pre-existing (not created by this up())
+        // The `volumes` argument here only contains volumes newly created in `up()`.
         for v_name in volumes {
             let _ = self.backend.remove_volume(v_name).await;
         }

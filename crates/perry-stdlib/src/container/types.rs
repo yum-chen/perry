@@ -197,7 +197,7 @@ impl From<perry_container_compose::error::ComposeError> for ContainerError {
 // ============ JSON Parsing ============
 
 /// Helper to extract string from StringHeader pointer
-unsafe fn string_from_header(ptr: *const StringHeader) -> Option<String> {
+pub unsafe fn string_from_header(ptr: *const StringHeader) -> Option<String> {
     if ptr.is_null() || (ptr as usize) < 0x1000 {
         return None;
     }
