@@ -1,4 +1,4 @@
-use crate::error::{ComposeError, Result};
+use crate::error::Result;
 use crate::config::ProjectConfig;
 use crate::types::ComposeSpec;
 use std::path::PathBuf;

@@ -9,12 +9,13 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct ComposeEngine {
     pub spec: ComposeSpec,
+    pub project_name: String,
     pub backend: Arc<dyn ContainerBackend + Send + Sync>,
 }
 
 impl ComposeEngine {
-    pub fn new(spec: ComposeSpec, backend: Arc<dyn ContainerBackend + Send + Sync>) -> Self {
-        Self { spec, backend }
+    pub fn new(spec: ComposeSpec, project_name: String, backend: Arc<dyn ContainerBackend + Send + Sync>) -> Self {
+        Self { spec, project_name, backend }
     }
 
     pub fn resolve_startup_order(spec: &ComposeSpec) -> Result<Vec<String>> {
@@ -72,8 +73,14 @@ impl ComposeEngine {
         Ok(order)
     }
 
-    pub async fn up(&self) -> Result<ComposeHandle> {
+    pub async fn up(&self, services: &[String], _detach: bool, _build: bool, _remove_orphans: bool) -> Result<ComposeHandle> {
         let order = Self::resolve_startup_order(&self.spec)?;
+        let services_to_start: Vec<String> = if services.is_empty() {
+            order
+        } else {
+            order.into_iter().filter(|s| services.contains(s)).collect()
+        };
+
         let mut created_networks = Vec::new();
         let mut created_volumes = Vec::new();
         let mut started_containers: Vec<(String, ContainerHandle)> = Vec::new();
@@ -100,12 +107,12 @@ impl ComposeEngine {
             }
         }
 
-        for service_name in order {
+        for service_name in services_to_start {
             let service = self.spec.services.get(&service_name).unwrap();
             let image = service.image.clone().unwrap_or_default();
             let container_spec = ContainerSpec {
                 image: image.clone(),
-                name: Some(generate_name(&image, &service_name)),
+                name: Some(generate_name(&self.project_name, &service_name, service)?),
                 ports: service.ports.as_ref().map(|p| p.iter().map(|ps| format!("{:?}", ps)).collect()),
                 volumes: service.volumes.as_ref().map(|v| v.iter().map(|vs| format!("{:?}", vs)).collect()),
                 env: match &service.environment {
@@ -157,9 +164,15 @@ impl ComposeEngine {
         }
     }
 
-    pub async fn down(&self, volumes: bool) -> Result<()> {
+    pub async fn down(&self, services: &[String], _remove_orphans: bool, volumes: bool) -> Result<()> {
         let order = Self::resolve_startup_order(&self.spec)?;
-        for service_name in order.iter().rev() {
+        let services_to_stop: Vec<String> = if services.is_empty() {
+            order
+        } else {
+            order.into_iter().filter(|s| services.contains(s)).collect()
+        };
+
+        for service_name in services_to_stop.iter().rev() {
              let _ = self.backend.remove(service_name, true).await;
         }
         if let Some(networks) = &self.spec.networks {
@@ -181,16 +194,30 @@ impl ComposeEngine {
         self.backend.list(true).await
     }
 
-    pub async fn logs(&self, service: Option<&str>, tail: Option<u32>) -> Result<ContainerLogs> {
-        if let Some(svc) = service {
-             self.backend.logs(svc, tail).await
+    pub async fn logs(&self, services: &[String], tail: Option<u32>) -> Result<std::collections::HashMap<String, String>> {
+        let mut results = std::collections::HashMap::new();
+        let target_services: Vec<String> = if services.is_empty() {
+            self.spec.services.keys().cloned().collect()
         } else {
-             Ok(ContainerLogs { stdout: "".into(), stderr: "".into() })
+            services.to_vec()
+        };
+
+        for svc in target_services {
+            // In a real implementation we would need to resolve the container ID for the service
+            // For now we use the service name as a placeholder
+            if let Ok(logs) = self.backend.logs(&svc, tail).await {
+                results.insert(svc, logs.stdout);
+            }
         }
+        Ok(results)
     }
 
-    pub async fn exec(&self, service: &str, cmd: &[String]) -> Result<ContainerLogs> {
-        self.backend.exec(service, cmd, None, None).await
+    pub async fn exec(&self, service: &str, cmd: &[String], env: Option<&std::collections::HashMap<String, String>>, workdir: Option<&str>) -> Result<ContainerLogs> {
+        self.backend.exec(service, cmd, env, workdir).await
+    }
+
+    pub fn config(&self) -> Result<String> {
+        serde_yaml::to_string(&self.spec).map_err(ComposeError::ParseError)
     }
 
     pub async fn start(&self, services: &[String]) -> Result<()> {

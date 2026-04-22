@@ -16,16 +16,16 @@ use backend::{detect_backend, ContainerBackend};
 use std::sync::{Arc, OnceLock};
 use dashmap::DashMap;
 
-static BACKEND: OnceLock<Arc<dyn ContainerBackend>> = OnceLock::new();
+static BACKEND: OnceLock<Arc<dyn ContainerBackend + Send + Sync>> = OnceLock::new();
 static COMPOSE_ENGINES: OnceLock<DashMap<u64, compose::ComposeEngine>> = OnceLock::new();
 
-async fn get_global_backend_instance() -> Result<Arc<dyn ContainerBackend>, String> {
+async fn get_global_backend_instance() -> Result<Arc<dyn ContainerBackend + Send + Sync>, String> {
     if let Some(b) = BACKEND.get() {
         return Ok(Arc::clone(b));
     }
     match detect_backend().await {
         Ok(b) => {
-            let arc_b: Arc<dyn ContainerBackend> = Arc::from(b);
+            let arc_b: Arc<dyn ContainerBackend + Send + Sync> = b.into();
             let _ = BACKEND.set(Arc::clone(&arc_b));
             Ok(arc_b)
         }
@@ -35,7 +35,7 @@ async fn get_global_backend_instance() -> Result<Arc<dyn ContainerBackend>, Stri
 
 unsafe fn string_from_header(ptr: *const StringHeader) -> Option<String> {
     if ptr.is_null() || (ptr as usize) < 0x1000 { return None; }
-    let len = (*ptr).length as usize;
+    let len = (*ptr).byte_len as usize;
     let data_ptr = (ptr as *const u8).add(std::mem::size_of::<StringHeader>());
     let bytes = std::slice::from_raw_parts(data_ptr, len);
     Some(String::from_utf8_lossy(bytes).to_string())

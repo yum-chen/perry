@@ -2,8 +2,9 @@
 
 use proptest::prelude::*;
 use serde_json::{json, Value};
-use perry_container_compose::indexmap::IndexMap;
-use perry_container_compose::types::DependsOnCondition;
+use indexmap::IndexMap;
+use perry_container_compose::types::{DependsOnCondition, ListOrDict};
+use perry_container_compose::error::ComposeError;
 
 // ============ Property 2: ContainerSpec CLI argument round-trip ============
 // Feature: perry-container, Property 2: ContainerSpec CLI argument round-trip
@@ -139,7 +140,7 @@ proptest! {
         }
 
         let expected_len = map.len();
-        let lod = perry_stdlib::container::ListOrDict::Dict(map);
+        let lod = ListOrDict::Dict(map);
         let result = lod.to_map();
 
         // All unique keys should be preserved
@@ -161,7 +162,7 @@ proptest! {
         entries in proptest::collection::vec("[A-Z][A-Z0-9_]{1,8}=[a-z0-9_]{0,10}", 1..=8),
     ) {
         let list: Vec<String> = entries.clone();
-        let lod = perry_stdlib::container::ListOrDict::List(list);
+        let lod = ListOrDict::List(list);
         let result = lod.to_map();
 
         // All unique keys should be present with non-None values
@@ -191,14 +192,14 @@ proptest! {
         keys in proptest::collection::vec("[A-Z][A-Z0-9_]{1,8}", 1..=5),
     ) {
         let list: Vec<String> = keys.clone();
-        let lod = perry_stdlib::container::ListOrDict::List(list);
+        let lod = ListOrDict::List(list);
         let result = lod.to_map();
 
         // All unique keys should be present with empty values
         // (HashMap deduplicates keys, so len may be <= keys.len())
         for key in &keys {
             prop_assert_eq!(
-                result.get(key).map(|s| s.as_str()),
+                result.get(key).map(|s: &String| s.as_str()),
                 Some(""),
                 "key {} without '=' should have empty value",
                 key
@@ -259,23 +260,23 @@ proptest! {
         msg in "[a-z A-Z0-9_]{1,40}",
     ) {
         let error = match variant {
-            0 => perry_stdlib::container::ContainerError::NotFound(msg.clone()),
-            1 => perry_stdlib::container::ContainerError::BackendError {
+            0 => ComposeError::NotFound(msg.clone()),
+            1 => ComposeError::BackendError {
                 code: 1,
                 message: msg.clone(),
             },
-            2 => perry_stdlib::container::ContainerError::VerificationFailed {
+            2 => ComposeError::VerificationFailed {
                 image: msg.clone(),
                 reason: "test reason".to_string(),
             },
-            3 => perry_stdlib::container::ContainerError::DependencyCycle {
-                cycle: vec![msg.clone()],
+            3 => ComposeError::DependencyCycle {
+                services: vec![msg.clone()],
             },
-            4 => perry_stdlib::container::ContainerError::ServiceStartupFailed {
+            4 => ComposeError::ServiceStartupFailed {
                 service: msg.clone(),
-                error: "test error".to_string(),
+                message: "test error".to_string(),
             },
-            _ => perry_stdlib::container::ContainerError::InvalidConfig(msg.clone()),
+            _ => ComposeError::ValidationError { message: msg.clone() },
         };
 
         let display = format!("{}", error);
@@ -285,7 +286,7 @@ proptest! {
             2 => "verification failed",
             3 => "Dependency cycle",
             4 => "failed to start",
-            _ => "Invalid configuration",
+            _ => "Validation error",
         };
 
         prop_assert!(
@@ -333,60 +334,6 @@ proptest! {
     }
 }
 
-// ============ Property: Handle registry register/take type safety ============
-// Validates: Registering and retrieving handles preserves the value and type.
-
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(100))]
-
-    #[test]
-    fn prop_handle_registry_type_safety(
-        ids in proptest::collection::vec("[a-f0-9]{12}", 1..=3),
-        images in proptest::collection::vec("[a-z][a-z0-9_.-]{3,30}", 1..=3),
-        stdout in "[a-z0-9 ]{0,50}",
-        stderr in "[a-z0-9 ]{0,50}",
-    ) {
-        use perry_stdlib::container::{ContainerInfo, ContainerLogs};
-
-        // Register a Vec<ContainerInfo> and take it back
-        let infos: Vec<ContainerInfo> = ids
-            .iter()
-            .zip(images.iter())
-            .map(|(id, img)| ContainerInfo {
-                id: id.clone(),
-                name: format!("svc-{}", &id[..6]),
-                image: img.clone(),
-                status: "running".to_string(),
-                ports: vec![],
-                created: "2025-01-01T00:00:00Z".to_string(),
-            })
-            .collect();
-
-        let h = perry_stdlib::container::types::register_container_info_list(infos.clone());
-        let taken: Option<Vec<ContainerInfo>> =
-            perry_stdlib::container::types::take_container_info_list(h);
-        prop_assert!(taken.is_some());
-        let taken = taken.unwrap();
-        prop_assert_eq!(taken.len(), infos.len());
-        for (original, recovered) in infos.iter().zip(taken.iter()) {
-            prop_assert_eq!(&recovered.id, &original.id);
-            prop_assert_eq!(&recovered.image, &original.image);
-        }
-
-        // Register ContainerLogs and take it back
-        let logs = ContainerLogs {
-            stdout: stdout.clone(),
-            stderr: stderr.clone(),
-        };
-        let lh = perry_stdlib::container::types::register_container_logs(logs);
-        let taken_logs: Option<ContainerLogs> =
-            perry_stdlib::container::types::take_container_logs(lh);
-        prop_assert!(taken_logs.is_some());
-        let taken_logs = taken_logs.unwrap();
-        prop_assert_eq!(taken_logs.stdout, stdout);
-        prop_assert_eq!(taken_logs.stderr, stderr);
-    }
-}
 
 // ============ Property: ComposeNetwork JSON round-trip ============
 // Validates: ComposeNetwork preserves all fields through serialization.

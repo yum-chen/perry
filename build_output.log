@@ -1,0 +1,1616 @@
+warning: unused doc comment
+  --> crates/perry-runtime/src/object.rs:18:1
+   |
+18 | / /// Overflow field storage for objects that exceed their pre-allocated inline slot count.
+19 | | /// Keyed by (obj_ptr as usize) -> Vec<JSValue bits> indexed by absolute field_index
+20 | | /// (inline slots 0..alloc_limit remain `TAG_UNDEFINED` placeholders in the Vec;
+21 | | /// they're never read since the inline slots are checked first).
+...  |
+29 | | /// This handles cases like Object.assign() adding many fields to an object
+30 | | /// that was allocated with only 8 slots (e.g., @noble/curves Fp field with 21 properties).
+   | |_------------------------------------------------------------------------------------------^
+   |   |
+   |   rustdoc does not generate documentation for macro invocations
+   |
+   = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+   = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused doc comment
+  --> crates/perry-runtime/src/object.rs:35:1
+   |
+35 | / /// Last-accessed overflow Vec cache — one entry, keyed by `obj_ptr`.
+36 | | /// Skips the outer HashMap lookup on consecutive writes to the same
+37 | | /// object (exactly the row-build pattern: a single object gets its
+38 | | /// overflow slots filled back-to-back). Refreshed on every slow-path
+...  |
+47 | | /// closure, so no other thread-local mutation can interleave between
+48 | | /// obtaining `&mut Vec` and caching its address.
+   | |_------------------------------------------------^
+   |   |
+   |   rustdoc does not generate documentation for macro invocations
+   |
+   = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> crates/perry-runtime/src/object.rs:235:1
+    |
+235 | / /// Recursion depth guard for js_native_call_method to prevent stack ...
+236 | | /// from circular module dependencies during initialization.
+    | |_-----------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused import: `js_closure_call1`
+    --> crates/perry-runtime/src/array.rs:1031:37
+     |
+1031 | use crate::closure::{ClosureHeader, js_closure_call1, js_closure_call2};
+     |                                     ^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `POINTER_MASK`
+    --> crates/perry-runtime/src/array.rs:2184:62
+     |
+2184 | ...et_pointer, TAG_UNDEFINED, POINTER_MASK};
+     |                               ^^^^^^^^^^^^
+
+warning: unused import: `dealloc`
+ --> crates/perry-runtime/src/map.rs:7:25
+  |
+7 | use std::alloc::{alloc, dealloc, realloc, Layout};
+  |                         ^^^^^^^
+
+warning: unused doc comment
+  --> crates/perry-runtime/src/set.rs:53:1
+   |
+53 | / /// Side-table mapping set_ptr -> (JSValueKey -> index_in_elements).
+54 | | /// Provides O(1) lookup for `find_value_index` instead of O(n) linear scan.
+   | |_---------------------------------------------------------------------------^
+   |   |
+   |   rustdoc does not generate documentation for macro invocations
+   |
+   = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused import: `ArrayHeader`
+   --> crates/perry-runtime/src/promise.rs:688:24
+    |
+688 |     use crate::array::{ArrayHeader, js_array_alloc, js_array_get_f64, j...
+    |                        ^^^^^^^^^^^
+
+warning: unused imports: `Layout` and `alloc`
+   --> crates/perry-runtime/src/date.rs:232:22
+    |
+232 |     use std::alloc::{alloc, Layout};
+    |                      ^^^^^  ^^^^^^
+
+warning: unused doc comment
+   --> crates/perry-runtime/src/os.rs:415:1
+    |
+415 | / /// Storage for process.on('exit', handler) callbacks.
+416 | | /// We just store the handler pointers; they don't actually fire on real exit.
+    | |_-----------------------------------------------------------------------------^
+    |   |
+    |   rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused import: `std::io::Read`
+ --> crates/perry-runtime/src/child_process.rs:4:5
+  |
+4 | use std::io::Read;
+  |     ^^^^^^^^^^^^^
+
+warning: unused import: `crate::buffer::BufferHeader`
+  --> crates/perry-runtime/src/child_process.rs:10:5
+   |
+10 | use crate::buffer::BufferHeader;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `js_object_set_field`
+ --> crates/perry-runtime/src/json.rs:8:53
+  |
+8 |     js_array_alloc, js_array_push, js_object_alloc, js_object_set_field,
+  |                                                     ^^^^^^^^^^^^^^^^^^^
+
+warning: `#[inline]` is ignored on externally exported functions
+    --> crates/perry-runtime/src/value.rs:1274:1
+     |
+1274 | #[inline]
+     | ^^^^^^^^^
+     |
+     = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+     = note: `#[warn(unused_attributes)]` (part of `#[warn(unused)]`) on by default
+
+warning: `#[inline]` is ignored on externally exported functions
+    --> crates/perry-runtime/src/object.rs:1058:1
+     |
+1058 | #[inline]
+     | ^^^^^^^^^
+     |
+     = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+
+warning: `#[inline]` is ignored on externally exported functions
+    --> crates/perry-runtime/src/object.rs:1137:1
+     |
+1137 | #[inline]
+     | ^^^^^^^^^
+     |
+     = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+
+warning: `#[inline]` is ignored on externally exported functions
+    --> crates/perry-runtime/src/builtins.rs:1133:1
+     |
+1133 | #[inline]
+     | ^^^^^^^^^
+     |
+     = help: externally exported functions are functions with `#[no_mangle]`, `#[export_name]`, or `#[linkage]`
+
+warning: unreachable expression
+    --> crates/perry-runtime/src/object.rs:3047:9
+     |
+3046 | ...           return dispatch_native_module_method(obj, method_name, args_ptr, args_len);
+     |               -------------------------------------------------------------------------- any code following this expression is unreachable
+3047 | ...   if !is_valid_obj_ptr(obj as *const u8) { return 0.0; }
+     |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unreachable expression
+     |
+     = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable expression
+    --> crates/perry-runtime/src/object.rs:3196:9
+     |
+3195 | ...           return dispatch_native_module_method(obj, method_name, args_ptr, args_len);
+     |               -------------------------------------------------------------------------- any code following this expression is unreachable
+3196 | ...   if !is_valid_obj_ptr(obj as *const u8) { return 0.0; }
+     |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unreachable expression
+
+warning: unreachable expression
+   --> crates/perry-runtime/src/fs.rs:637:5
+    |
+635 |         crate::exception::js_throw(err_val);
+    |         ----------------------------------- any code following this expression is unreachable
+636 |     }
+637 |     f64::from_bits(TAG_UNDEFINED)
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unreachable expression
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/value.rs:429:9
+    |
+429 | ...   unsafe { crate::string::js_string_from_bytes(b"".as_ptr(), 0) as ...
+    |       ^^^^^^ unnecessary `unsafe` block
+    |
+    = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `result_top16`
+    --> crates/perry-runtime/src/value.rs:1459:9
+     |
+1459 |     let result_top16 = result_bits >> 48;
+     |         ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_result_top16`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `top16`
+    --> crates/perry-runtime/src/value.rs:1468:9
+     |
+1468 |     let top16 = bits >> 48;
+     |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_top16`
+
+warning: unnecessary `unsafe` block
+    --> crates/perry-runtime/src/value.rs:1505:26
+     |
+1505 | ...   let result = unsafe { crate::closure::js_closure_call1(callback,...
+     |                    ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> crates/perry-runtime/src/value.rs:1536:26
+     |
+1536 | ...   let result = unsafe { crate::closure::js_closure_call1(callback,...
+     |                    ^^^^^^ unnecessary `unsafe` block
+
+warning: unused variable: `method_name`
+   --> crates/perry-runtime/src/object.rs:244:14
+    |
+244 |     fn enter(method_name: &str) -> Option<Self> {
+    |              ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_method_name`
+
+warning: unused variable: `field_count`
+    --> crates/perry-runtime/src/object.rs:2088:13
+     |
+2088 |         let field_count = (*obj).field_count as usize;
+     |             ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_field_count`
+
+warning: unnecessary `unsafe` block
+    --> crates/perry-runtime/src/object.rs:3746:5
+     |
+3746 |     unsafe {
+     |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unused variable: `namespace_obj`
+    --> crates/perry-runtime/src/object.rs:3837:5
+     |
+3837 |     namespace_obj: f64,
+     |     ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_namespace_obj`
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/array.rs:723:19
+    |
+723 | ...   let arr = unsafe { crate::set::js_set_to_array(src as *const crat...
+    |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: variable `result_len` is assigned to, but never used
+    --> crates/perry-runtime/src/array.rs:1211:13
+     |
+1211 |         let mut result_len = 0u32;
+     |             ^^^^^^^^^^^^^^
+     |
+     = note: consider using `_result_len` instead
+
+warning: value assigned to `result_len` is never read
+    --> crates/perry-runtime/src/array.rs:1219:17
+     |
+1219 |                 result_len += 1;
+     |                 ^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary `unsafe` block
+    --> crates/perry-runtime/src/array.rs:2199:20
+     |
+2199 |     let next_val = unsafe { js_object_get_field_by_name(iter_obj, next...
+     |                    ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> crates/perry-runtime/src/array.rs:2220:24
+     |
+2220 | ...   let done_val = unsafe { js_object_get_field_by_name(result_obj, ...
+     |                      ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> crates/perry-runtime/src/array.rs:2226:19
+     |
+2226 | ...   let val = unsafe { js_object_get_field_by_name(result_obj, value...
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unused variable: `iter_bits`
+    --> crates/perry-runtime/src/array.rs:2192:9
+     |
+2192 |     let iter_bits = iter_f64.to_bits();
+     |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_iter_bits`
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/map.rs:423:5
+    |
+423 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/set.rs:392:5
+    |
+392 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unused variable: `pad_u16`
+    --> crates/perry-runtime/src/string.rs:1284:9
+     |
+1284 |     let pad_u16: Vec<u16> = pad_data.encode_utf16().collect();
+     |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_pad_u16`
+
+warning: unnecessary `unsafe` block
+  --> crates/perry-runtime/src/exception.rs:93:39
+   |
+73 |     unsafe {
+   |     ------ because it's nested under this `unsafe` block
+...
+93 |                     let object_type = unsafe { *(ptr as *const u32) };
+   |                                       ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+  --> crates/perry-runtime/src/exception.rs:96:40
+   |
+73 |     unsafe {
+   |     ------ because it's nested under this `unsafe` block
+...
+96 |                         let name_ptr = unsafe { *((ptr + 16) as *const *...
+   |                                        ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+  --> crates/perry-runtime/src/exception.rs:97:39
+   |
+73 |     unsafe {
+   |     ------ because it's nested under this `unsafe` block
+...
+97 |                         let msg_ptr = unsafe { *((ptr + 8) as *const *co...
+   |                                       ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+  --> crates/perry-runtime/src/exception.rs:99:29
+   |
+73 |     unsafe {
+   |     ------ because it's nested under this `unsafe` block
+...
+99 |                             unsafe {
+   |                             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/exception.rs:106:29
+    |
+ 73 |     unsafe {
+    |     ------ because it's nested under this `unsafe` block
+...
+106 |                             unsafe {
+    |                             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/exception.rs:123:35
+    |
+ 73 |     unsafe {
+    |     ------ because it's nested under this `unsafe` block
+...
+123 |                     let msg_str = unsafe {
+    |                                   ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+  --> crates/perry-runtime/src/symbol.rs:93:20
+   |
+93 |     let desc_ptr = unsafe { js_string_from_bytes(desc_bytes.as_ptr(), de...
+   |                    ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/promise.rs:498:9
+    |
+498 |         unsafe { js_promise_resolve(result_promise, arr_f64); }
+    |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/promise.rs:505:19
+    |
+505 |     let done_jv = unsafe {
+    |                   ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/promise.rs:508:20
+    |
+508 |     let value_jv = unsafe {
+    |                    ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/promise.rs:517:9
+    |
+517 |         unsafe { js_promise_resolve(result_promise, arr_f64); }
+    |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/promise.rs:652:5
+    |
+652 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> crates/perry-runtime/src/promise.rs:1250:5
+     |
+1250 |     unsafe {
+     |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> crates/perry-runtime/src/promise.rs:1260:5
+     |
+1260 |     unsafe {
+     |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> crates/perry-runtime/src/promise.rs:1290:5
+     |
+1290 |     unsafe {
+     |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> crates/perry-runtime/src/promise.rs:1302:5
+     |
+1302 |     unsafe {
+     |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/timer.rs:222:13
+    |
+222 |             unsafe {
+    |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/timer.rs:348:9
+    |
+348 |         unsafe {
+    |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> crates/perry-runtime/src/builtins.rs:2319:25
+     |
+2319 |             Some(cb) => unsafe {
+     |                         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/fs.rs:415:5
+    |
+415 |     unsafe { crate::closure::js_closure_get_capture_f64(closure, 0) }
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/fs.rs:631:5
+    |
+631 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/fs.rs:874:13
+    |
+874 |             unsafe {
+    |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/fs.rs:927:13
+    |
+927 |             unsafe {
+    |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/fs.rs:936:13
+    |
+936 |             unsafe {
+    |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/fs.rs:991:17
+    |
+991 |                 unsafe {
+    |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> crates/perry-runtime/src/fs.rs:1009:17
+     |
+1009 |                 unsafe {
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> crates/perry-runtime/src/fs.rs:1018:21
+     |
+1018 |                     unsafe {
+     |                     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> crates/perry-runtime/src/fs.rs:1194:5
+     |
+1194 |     unsafe {
+     |     ^^^^^^ unnecessary `unsafe` block
+
+warning: variable does not need to be mutable
+   --> crates/perry-runtime/src/date.rs:638:9
+    |
+638 |     let mut days = if is_negative {
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `host` is never read
+  --> crates/perry-runtime/src/url.rs:39:20
+   |
+39 |     let mut host = String::new();
+   |                    ^^^^^^^^^^^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: value assigned to `hostname` is never read
+  --> crates/perry-runtime/src/url.rs:40:24
+   |
+40 |     let mut hostname = String::new();
+   |                        ^^^^^^^^^^^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: value assigned to `pathname` is never read
+  --> crates/perry-runtime/src/url.rs:42:24
+   |
+42 |     let mut pathname = String::from("/");
+   |                        ^^^^^^^^^^^^^^^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/url.rs:200:5
+    |
+200 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/url.rs:812:5
+    |
+812 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/url.rs:829:5
+    |
+829 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/url.rs:863:5
+    |
+863 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/url.rs:909:5
+    |
+909 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/url.rs:943:5
+    |
+943 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/child_process.rs:226:16
+    |
+226 |         return unsafe { js_string_from_bytes(b"".as_ptr(), 0) };
+    |                ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+  --> crates/perry-runtime/src/weakref.rs:49:5
+   |
+49 |     unsafe {
+   |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+  --> crates/perry-runtime/src/weakref.rs:89:5
+   |
+89 |     unsafe {
+   |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/weakref.rs:116:5
+    |
+116 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/plugin.rs:591:23
+    |
+591 |             let arr = unsafe { crate::array::js_array_alloc(8) };
+    |                       ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/plugin.rs:596:15
+    |
+596 |     let arr = unsafe { crate::array::js_array_alloc(8) };
+    |               ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/plugin.rs:608:17
+    |
+608 |                 unsafe {
+    |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/plugin.rs:622:15
+    |
+622 |     let arr = unsafe { crate::array::js_array_alloc(reg.plugins.len() a...
+    |               ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/plugin.rs:667:15
+    |
+667 |     let arr = unsafe { crate::array::js_array_alloc(reg.hooks.len() as ...
+    |               ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/plugin.rs:683:15
+    |
+683 |     let arr = unsafe { crate::array::js_array_alloc(reg.tools.len() as ...
+    |               ^^^^^^ unnecessary `unsafe` block
+
+warning: unused variable: `ptr`
+   --> crates/perry-runtime/src/geisterhand_registry.rs:449:9
+    |
+449 |     let ptr = bytes.as_ptr();
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_ptr`
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/proxy.rs:166:5
+    |
+166 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/proxy.rs:178:5
+    |
+178 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/proxy.rs:251:9
+    |
+251 |         unsafe {
+    |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/proxy.rs:275:5
+    |
+275 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/proxy.rs:311:9
+    |
+311 |         unsafe {
+    |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/proxy.rs:322:5
+    |
+322 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/proxy.rs:356:9
+    |
+356 |         unsafe {
+    |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/proxy.rs:387:9
+    |
+387 |         unsafe {
+    |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/proxy.rs:393:5
+    |
+393 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/proxy.rs:428:9
+    |
+428 |         unsafe {
+    |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/proxy.rs:453:5
+    |
+453 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/proxy.rs:511:9
+    |
+511 |         unsafe {
+    |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-runtime/src/proxy.rs:558:5
+    |
+558 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: constant `TAG_MARKER` is never used
+  --> crates/perry-runtime/src/value.rs:21:7
+   |
+21 | const TAG_MARKER: u64 = 0x7FFC_0000_0000_0000;
+   |       ^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `clear_marks` is never used
+    --> crates/perry-runtime/src/gc.rs:1339:4
+     |
+1339 | fn clear_marks() {
+     |    ^^^^^^^^^^^
+
+warning: function `create_fs_constants_object` is never used
+    --> crates/perry-runtime/src/object.rs:3927:11
+     |
+3927 | unsafe fn create_fs_constants_object() -> f64 {
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `looks_like_pointer` is never used
+  --> crates/perry-runtime/src/map.rs:82:4
+   |
+82 | fn looks_like_pointer(val: f64) -> bool {
+   |    ^^^^^^^^^^^^^^^^^^
+
+warning: function `as_raw_pointer` is never used
+  --> crates/perry-runtime/src/map.rs:93:4
+   |
+93 | fn as_raw_pointer(val: f64) -> *const u8 {
+   |    ^^^^^^^^^^^^^^
+
+warning: function `looks_like_pointer` is never used
+  --> crates/perry-runtime/src/set.rs:99:4
+   |
+99 | fn looks_like_pointer(val: f64) -> bool {
+   |    ^^^^^^^^^^^^^^^^^^
+
+warning: function `as_raw_pointer` is never used
+   --> crates/perry-runtime/src/set.rs:107:4
+    |
+107 | fn as_raw_pointer(val: f64) -> *const u8 {
+    |    ^^^^^^^^^^^^^^
+
+warning: function `is_valid_bigint_ptr` is never used
+  --> crates/perry-runtime/src/bigint.rs:35:4
+   |
+35 | fn is_valid_bigint_ptr(p: *const BigIntHeader) -> bool {
+   |    ^^^^^^^^^^^^^^^^^^^
+
+warning: constant `POINTER_MASK` is never used
+   --> crates/perry-runtime/src/promise.rs:573:11
+    |
+573 |     const POINTER_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
+    |           ^^^^^^^^^^^^
+
+warning: function `write_stream_end1_impl` is never used
+   --> crates/perry-runtime/src/fs.rs:815:15
+    |
+815 | extern "C" fn write_stream_end1_impl(closure: *const ClosureHeader, chu...
+    |               ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `POINTER_TAG` is never used
+   --> crates/perry-runtime/src/regex.rs:528:11
+    |
+528 |     const POINTER_TAG: u64 = 0x7FFD_0000_0000_0000;
+    |           ^^^^^^^^^^^
+
+warning: constant `POINTER_MASK` is never used
+   --> crates/perry-runtime/src/regex.rs:529:11
+    |
+529 |     const POINTER_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
+    |           ^^^^^^^^^^^^
+
+warning: function `nanbox_pointer_f64` is never used
+    --> crates/perry-runtime/src/json.rs:1129:4
+     |
+1129 | fn nanbox_pointer_f64(ptr: *const u8) -> f64 {
+     |    ^^^^^^^^^^^^^^^^^^
+
+warning: function `stringify_value_with_replacer` is never used
+    --> crates/perry-runtime/src/json.rs:1136:11
+     |
+1136 | unsafe fn stringify_value_with_replacer(
+     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `name`, `start_fn`, and `stop_fn` are never read
+  --> crates/perry-runtime/src/plugin.rs:79:5
+   |
+77 | struct ServiceRegistration {
+   |        ------------------- fields in this struct
+78 |     plugin_id: u64,
+79 |     name: String,
+   |     ^^^^
+80 |     start_fn: u64,
+   |     ^^^^^^^^
+81 |     stop_fn: u64,
+   |     ^^^^^^^
+
+warning: fields `path` and `handler_closure` are never read
+  --> crates/perry-runtime/src/plugin.rs:86:5
+   |
+84 | struct RouteRegistration {
+   |        ----------------- fields in this struct
+85 |     plugin_id: u64,
+86 |     path: String,
+   |     ^^^^
+87 |     handler_closure: u64,
+   |     ^^^^^^^^^^^^^^^
+
+warning: creating a shared reference to mutable static
+   --> crates/perry-runtime/src/object.rs:477:22
+    |
+477 |         for entry in TRANSITION_CACHE_GLOBAL.iter() {
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+    = note: `#[warn(static_mut_refs)]` (part of `#[warn(rust_2024_compatibility)]`) on by default
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/array.rs:145:45
+    |
+145 | ... { std::mem::transmute(0x7FFC_0000_0000_0001u64) };
+    |       -------------------^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |       |
+    |       help: replace this with: `f64::from_bits`
+    |
+    = note: `#[warn(unnecessary_transmutes)]` on by default
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/array.rs:196:45
+    |
+196 | ... { std::mem::transmute(0x7FFC_0000_0000_0001u64) };
+    |       -------------------^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |       |
+    |       help: replace this with: `f64::from_bits`
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/array.rs:374:49
+    |
+374 | ... { std::mem::transmute(0x7FFC_0000_0000_0001u64) };
+    |       -------------------^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |       |
+    |       help: replace this with: `f64::from_bits`
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/promise.rs:650:37
+    |
+650 | ... = unsafe { std::mem::transmute(resolve_closure as i64) };
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+650 -     let resolve_f64: f64 = unsafe { std::mem::transmute(resolve_closure as i64) };
+650 +     let resolve_f64: f64 = unsafe { f64::from_bits(i64::cast_unsigned(resolve_closure as i64)) };
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/promise.rs:651:36
+    |
+651 | ...4 = unsafe { std::mem::transmute(reject_closure as i64) };
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+651 -     let reject_f64: f64 = unsafe { std::mem::transmute(reject_closure as i64) };
+651 +     let reject_f64: f64 = unsafe { f64::from_bits(i64::cast_unsigned(reject_closure as i64)) };
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/fs.rs:225:20
+    |
+225 |             return std::mem::transmute::<i64, f64>(arr as i64);
+    |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+225 -             return std::mem::transmute::<i64, f64>(arr as i64);
+225 +             return f64::from_bits(i64::cast_unsigned(arr as i64));
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/fs.rs:236:24
+    |
+236 |                 return std::mem::transmute::<i64, f64>(arr as i64);
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+236 -                 return std::mem::transmute::<i64, f64>(arr as i64);
+236 +                 return f64::from_bits(i64::cast_unsigned(arr as i64));
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/fs.rs:259:17
+    |
+259 |                 std::mem::transmute::<i64, f64>(arr as i64)
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+259 -                 std::mem::transmute::<i64, f64>(arr as i64)
+259 +                 f64::from_bits(i64::cast_unsigned(arr as i64))
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/fs.rs:263:17
+    |
+263 |                 std::mem::transmute::<i64, f64>(arr as i64)
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+263 -                 std::mem::transmute::<i64, f64>(arr as i64)
+263 +                 f64::from_bits(i64::cast_unsigned(arr as i64))
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/url.rs:467:28
+    |
+467 |             let pair_f64 = std::mem::transmute::<i64, f64>(pair as i64);
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+467 -             let pair_f64 = std::mem::transmute::<i64, f64>(pair as i64);
+467 +             let pair_f64 = f64::from_bits(i64::cast_unsigned(pair as i64));
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/url.rs:471:27
+    |
+471 | ..._f64 = std::mem::transmute::<i64, f64>(entries_array as i64);
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+471 -         let entries_f64 = std::mem::transmute::<i64, f64>(entries_array as i64);
+471 +         let entries_f64 = f64::from_bits(i64::cast_unsigned(entries_array as i64));
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/url.rs:485:50
+    |
+485 | ... = unsafe { std::mem::transmute::<f64, i64>(entries_f64) as *mut Arr...
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+485 -     let entries_ptr: *mut ArrayHeader = unsafe { std::mem::transmute::<f64, i64>(entries_f64) as *mut ArrayHeader };
+485 +     let entries_ptr: *mut ArrayHeader = unsafe { f64::to_bits(entries_f64).cast_signed() as *mut ArrayHeader };
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/url.rs:496:51
+    |
+496 | ...r = unsafe { std::mem::transmute::<f64, i64>(pair_f64) as *mut Array...
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+496 -         let pair_ptr: *mut ArrayHeader = unsafe { std::mem::transmute::<f64, i64>(pair_f64) as *mut ArrayHeader };
+496 +         let pair_ptr: *mut ArrayHeader = unsafe { f64::to_bits(pair_f64).cast_signed() as *mut ArrayHeader };
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/url.rs:627:28
+    |
+627 |             let pair_f64 = std::mem::transmute::<i64, f64>(pair as i64);
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+627 -             let pair_f64 = std::mem::transmute::<i64, f64>(pair as i64);
+627 +             let pair_f64 = f64::from_bits(i64::cast_unsigned(pair as i64));
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/url.rs:630:27
+    |
+630 | ..._f64 = std::mem::transmute::<i64, f64>(entries_array as i64);
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+630 -         let entries_f64 = std::mem::transmute::<i64, f64>(entries_array as i64);
+630 +         let entries_f64 = f64::from_bits(i64::cast_unsigned(entries_array as i64));
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/url.rs:675:28
+    |
+675 |             let pair_f64 = std::mem::transmute::<i64, f64>(pair as i64);
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+675 -             let pair_f64 = std::mem::transmute::<i64, f64>(pair as i64);
+675 +             let pair_f64 = f64::from_bits(i64::cast_unsigned(pair as i64));
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/url.rs:678:27
+    |
+678 | ..._f64 = std::mem::transmute::<i64, f64>(entries_array as i64);
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+678 -         let entries_f64 = std::mem::transmute::<i64, f64>(entries_array as i64);
+678 +         let entries_f64 = f64::from_bits(i64::cast_unsigned(entries_array as i64));
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/url.rs:711:28
+    |
+711 |             let pair_f64 = std::mem::transmute::<i64, f64>(pair as i64);
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+711 -             let pair_f64 = std::mem::transmute::<i64, f64>(pair as i64);
+711 +             let pair_f64 = f64::from_bits(i64::cast_unsigned(pair as i64));
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/url.rs:714:27
+    |
+714 | ..._f64 = std::mem::transmute::<i64, f64>(entries_array as i64);
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+714 -         let entries_f64 = std::mem::transmute::<i64, f64>(entries_array as i64);
+714 +         let entries_f64 = f64::from_bits(i64::cast_unsigned(entries_array as i64));
+    |
+
+warning: unnecessary transmute
+   --> crates/perry-runtime/src/url.rs:766:9
+    |
+766 |         std::mem::transmute::<i64, f64>(result as i64)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: replace this with
+    |
+766 -         std::mem::transmute::<i64, f64>(result as i64)
+766 +         f64::from_bits(i64::cast_unsigned(result as i64))
+    |
+
+warning: unnecessary transmute
+  --> crates/perry-runtime/src/child_process.rs:26:36
+   |
+26 | ...fe { std::mem::transmute::<u64, f64>(0x7FFC_0000_0000_0004u64) };
+   |         -------------------------------^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: replace this with: `f64::from_bits`
+
+warning: unnecessary transmute
+  --> crates/perry-runtime/src/child_process.rs:27:37
+   |
+27 | ...fe { std::mem::transmute::<u64, f64>(0x7FFC_0000_0000_0003u64) };
+   |         -------------------------------^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: replace this with: `f64::from_bits`
+
+warning: unnecessary transmute
+  --> crates/perry-runtime/src/child_process.rs:28:36
+   |
+28 | ...fe { std::mem::transmute::<u64, f64>(0x7FFC_0000_0000_0002u64) };
+   |         -------------------------------^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |         |
+   |         help: replace this with: `f64::from_bits`
+
+warning: `perry-runtime` (lib) generated 141 warnings (run `cargo fix --lib -p perry-runtime` to apply 40 suggestions)
+warning: unused import: `ComposeError`
+ --> crates/perry-container-compose/src/project.rs:1:20
+  |
+1 | use crate::error::{ComposeError, Result};
+  |                    ^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `crate::error::Result`
+ --> crates/perry-container-compose/src/service.rs:1:5
+  |
+1 | use crate::error::Result;
+  |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `detach`
+  --> crates/perry-container-compose/src/compose.rs:76:49
+   |
+76 | ...lf, services: &[String], detach: bool, build: bool, _remove_orphans: ...
+   |                             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_detach`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `build`
+  --> crates/perry-container-compose/src/compose.rs:76:63
+   |
+76 | ...&[String], detach: bool, build: bool, _remove_orphans: bool) -> Resul...
+   |                             ^^^^^ help: if this is intentional, prefix it with an underscore: `_build`
+
+warning: `perry-container-compose` (lib) generated 4 warnings (run `cargo fix --lib -p perry-container-compose` to apply 4 suggestions)
+    Checking perry-stdlib v0.5.58 (/app/crates/perry-stdlib)
+warning: unexpected `cfg` condition value: `net`
+  --> crates/perry-stdlib/src/lib.rs:81:11
+   |
+81 | #[cfg(all(feature = "net", not(target_os = "ios"), not(target_os = "andr...
+   |           ^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `feature` are: `async-runtime`, `compression`, `container`, `core`, `crypto`, `database`, `database-mongodb`, `database-mysql`, `database-postgres`, `database-redis`, `database-sqlite`, `default`, `email`, `full`, `html-parser`, `http-client`, `http-server`, `ids`, `image`, `perry-container-compose`, `rate-limit`, `scheduler`, `validation`, and `websocket`
+   = help: consider adding `net` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+   = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: unexpected `cfg` condition value: `net`
+  --> crates/perry-stdlib/src/lib.rs:83:11
+   |
+83 | #[cfg(all(feature = "net", not(target_os = "ios"), not(target_os = "andr...
+   |           ^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `feature` are: `async-runtime`, `compression`, `container`, `core`, `crypto`, `database`, `database-mongodb`, `database-mysql`, `database-postgres`, `database-redis`, `database-sqlite`, `default`, `email`, `full`, `html-parser`, `http-client`, `http-server`, `ids`, `image`, `perry-container-compose`, `rate-limit`, `scheduler`, `validation`, and `websocket`
+   = help: consider adding `net` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `net`
+   --> crates/perry-stdlib/src/common/async_bridge.rs:217:15
+    |
+217 |     #[cfg(all(feature = "net", not(target_os = "ios"), not(target_os = ...
+    |               ^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `async-runtime`, `compression`, `container`, `core`, `crypto`, `database`, `database-mongodb`, `database-mysql`, `database-postgres`, `database-redis`, `database-sqlite`, `default`, `email`, `full`, `html-parser`, `http-client`, `http-server`, `ids`, `image`, `perry-container-compose`, `rate-limit`, `scheduler`, `validation`, and `websocket`
+    = help: consider adding `net` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `net`
+   --> crates/perry-stdlib/src/common/async_bridge.rs:267:15
+    |
+267 |     #[cfg(all(feature = "net", not(target_os = "ios"), not(target_os = ...
+    |               ^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `async-runtime`, `compression`, `container`, `core`, `crypto`, `database`, `database-mongodb`, `database-mysql`, `database-postgres`, `database-redis`, `database-sqlite`, `default`, `email`, `full`, `html-parser`, `http-client`, `http-server`, `ids`, `image`, `perry-container-compose`, `rate-limit`, `scheduler`, `validation`, and `websocket`
+    = help: consider adding `net` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `net`
+   --> crates/perry-stdlib/src/common/dispatch.rs:214:11
+    |
+214 | #[cfg(all(feature = "net", not(target_os = "ios"), not(target_os = "and...
+    |           ^^^^^^^^^^^^^^^
+    |
+    = note: expected values for `feature` are: `async-runtime`, `compression`, `container`, `core`, `crypto`, `database`, `database-mongodb`, `database-mysql`, `database-postgres`, `database-redis`, `database-sqlite`, `default`, `email`, `full`, `html-parser`, `http-client`, `http-server`, `ids`, `image`, `perry-container-compose`, `rate-limit`, `scheduler`, `validation`, and `websocket`
+    = help: consider adding `net` as a feature in `Cargo.toml`
+    = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unexpected `cfg` condition value: `net`
+  --> crates/perry-stdlib/src/common/dispatch.rs:62:15
+   |
+62 |     #[cfg(all(feature = "net", not(target_os = "ios"), not(target_os = "...
+   |               ^^^^^^^^^^^^^^^
+   |
+   = note: expected values for `feature` are: `async-runtime`, `compression`, `container`, `core`, `crypto`, `database`, `database-mongodb`, `database-mysql`, `database-postgres`, `database-redis`, `database-sqlite`, `default`, `email`, `full`, `html-parser`, `http-client`, `http-server`, `ids`, `image`, `perry-container-compose`, `rate-limit`, `scheduler`, `validation`, and `websocket`
+   = help: consider adding `net` as a feature in `Cargo.toml`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+
+warning: unused imports: `ObjectHeader`, `js_object_alloc`, `js_object_get_field`, and `js_object_set_field`
+ --> crates/perry-stdlib/src/lodash.rs:7:67
+  |
+7 |     js_array_alloc, js_array_get, js_array_length, js_array_push, js_object_alloc,
+  |                                                                   ^^^^^^^^^^^^^^^
+8 |     js_object_get_field, js_object_set_field, js_string_from_bytes, JSValue, ObjectHeader,
+  |     ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^                                 ^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `js_string_from_bytes`
+ --> crates/perry-stdlib/src/events.rs:6:21
+  |
+6 | use perry_runtime::{js_string_from_bytes, StringHeader, ClosureHeader, js...
+  |                     ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `JSValue`
+ --> crates/perry-stdlib/src/framework/server.rs:6:43
+  |
+6 | use perry_runtime::{js_string_from_bytes, JSValue, StringHeader};
+  |                                           ^^^^^^^
+
+warning: unused import: `Method`
+  --> crates/perry-stdlib/src/framework/server.rs:10:29
+   |
+10 | use hyper::{body::Incoming, Method, Request, Response, StatusCode};
+   |                             ^^^^^^
+
+warning: unused import: `json::*`
+  --> crates/perry-stdlib/src/framework/mod.rs:30:9
+   |
+30 | pub use json::*;
+   |         ^^^^^^^
+
+warning: ambiguous glob re-exports
+  --> crates/perry-stdlib/src/lib.rs:49:9
+   |
+49 | pub use framework::*;
+   |         ^^^^^^^^^^^^ the name `server` in the type namespace is first re-exported here
+...
+55 | pub use fastify::*;
+   |         ---------- but the name `server` in the type namespace is also re-exported here
+   |
+   = note: `#[warn(ambiguous_glob_reexports)]` on by default
+
+warning: unused import: `register_handle`
+  --> crates/perry-stdlib/src/fastify/context.rs:10:49
+   |
+10 | use crate::common::{get_handle, get_handle_mut, register_handle, Handle};
+   |                                                 ^^^^^^^^^^^^^^^
+
+warning: unused import: `get_handle_mut`
+  --> crates/perry-stdlib/src/fastify/server.rs:19:33
+   |
+19 | use crate::common::{get_handle, get_handle_mut, register_handle, Handle,...
+   |                                 ^^^^^^^^^^^^^^
+
+warning: unused import: `super::context::string_from_header`
+  --> crates/perry-stdlib/src/fastify/server.rs:21:5
+   |
+21 | use super::context::string_from_header;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `AtomicU64` and `Ordering`
+  --> crates/perry-stdlib/src/fastify/mod.rs:37:25
+   |
+37 | use std::sync::atomic::{AtomicU64, Ordering};
+   |                         ^^^^^^^^^  ^^^^^^^^
+
+warning: unused imports: `JSValue` and `ObjectHeader`
+ --> crates/perry-stdlib/src/axios.rs:6:59
+  |
+6 | ..., js_string_from_bytes, JSValue, ObjectHeader, Promise, StringHeader};
+  |                            ^^^^^^^  ^^^^^^^^^^^^
+
+warning: unused import: `PgConfig`
+ --> crates/perry-stdlib/src/pg/connection.rs:9:37
+  |
+9 | use super::types::{parse_pg_config, PgConfig};
+  |                                     ^^^^^^^^
+
+warning: unused import: `js_object_get_field`
+ --> crates/perry-stdlib/src/mysql2/types.rs:5:22
+  |
+5 |     js_object_alloc, js_object_get_field, js_object_get_field_by_name, js...
+  |                      ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `js_object_alloc`
+ --> crates/perry-stdlib/src/sqlite.rs:7:36
+  |
+7 |     js_array_alloc, js_array_push, js_object_alloc, js_object_alloc_with_...
+  |                                    ^^^^^^^^^^^^^^^
+
+warning: unused import: `params_from_iter`
+  --> crates/perry-stdlib/src/sqlite.rs:10:28
+   |
+10 | use rusqlite::{Connection, params_from_iter, types::Value as SqliteValue};
+   |                            ^^^^^^^^^^^^^^^^
+
+warning: unused import: `Write`
+ --> crates/perry-stdlib/src/zlib.rs:9:21
+  |
+9 | use std::io::{Read, Write};
+  |                     ^^^^^
+
+warning: unused import: `crate::container::types::*`
+ --> crates/perry-stdlib/src/container/backend.rs:1:5
+  |
+1 | use crate::container::types::*;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `async_trait::async_trait`
+ --> crates/perry-stdlib/src/container/backend.rs:2:5
+  |
+2 | use async_trait::async_trait;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+ --> crates/perry-stdlib/src/container/backend.rs:3:5
+  |
+3 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `JSValue`
+  --> crates/perry-stdlib/src/container/mod.rs:14:60
+   |
+14 | use perry_runtime::{js_promise_new, Promise, StringHeader, JSValue};
+   |                                                            ^^^^^^^
+
+error[E0277]: the trait bound `Arc<dyn ContainerBackend>: From<...>` is not satisfied
+  --> crates/perry-stdlib/src/container/mod.rs:28:52
+   |
+28 |             let arc_b: Arc<dyn ContainerBackend> = Arc::from(b);
+   |                                                    ^^^ unsatisfied trait bound
+   |
+   = help: the trait `std::convert::From<std::boxed::Box<dyn ContainerBackend + std::marker::Send + std::marker::Sync>>` is not implemented for `Arc<dyn ContainerBackend>`
+   = help: the following other types implement trait `std::convert::From<T>`:
+             `Arc<B>` implements `std::convert::From<Cow<'_, B>>`
+             `Arc<ByteStr>` implements `std::convert::From<Arc<[u8]>>`
+             `Arc<CStr>` implements `std::convert::From<&CStr>`
+             `Arc<CStr>` implements `std::convert::From<&mut CStr>`
+             `Arc<CStr>` implements `std::convert::From<CString>`
+             `Arc<OsStr>` implements `std::convert::From<&OsStr>`
+             `Arc<OsStr>` implements `std::convert::From<&mut OsStr>`
+             `Arc<OsStr>` implements `std::convert::From<OsString>`
+           and 21 others
+   = note: the full name for the type has been written to '/app/target/debug/deps/perry_stdlib-bc27365e841dc7bc.long-type-18030062056583083575.txt'
+   = note: consider using `--verbose` to print the full type name to the console
+
+error[E0609]: no field `length` on type `StringHeader`
+  --> crates/perry-stdlib/src/container/mod.rs:38:22
+   |
+38 |     let len = (*ptr).length as usize;
+   |                      ^^^^^^ unknown field
+   |
+   = note: available fields are: `utf16_len`, `byte_len`, `capacity`, `refcount`
+
+warning: unused import: `Digest`
+ --> crates/perry-stdlib/src/crypto.rs:9:20
+  |
+9 | use sha2::{Sha256, Digest as Sha256Digest};
+  |                    ^^^^^^
+
+warning: unused variable: `value`
+   --> crates/perry-stdlib/src/lodash.rs:203:5
+    |
+203 |     value: JSValue,
+    |     ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `start`
+   --> crates/perry-stdlib/src/lodash.rs:215:9
+    |
+215 |     let start = if start < 0 { (len + start).max(0) } else { start.min(...
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_start`
+
+warning: unused variable: `end`
+   --> crates/perry-stdlib/src/lodash.rs:216:9
+    |
+216 |     let end = if end < 0 { (len + end).max(0) } else { end.min(len) } a...
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_end`
+
+warning: unused variable: `handle`
+   --> crates/perry-stdlib/src/commander.rs:166:47
+    |
+166 | ... fn js_commander_command(handle: Handle, name_ptr: *const StringHead...
+    |                             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_handle`
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/commander.rs:321:20
+    |
+321 | ...   return unsafe { js_string_from_bytes(arg.as_ptr(), arg.len() as u...
+    |              ^^^^^^ unnecessary `unsafe` block
+    |
+    = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/decimal.rs:205:5
+    |
+205 |     unsafe { js_string_from_bytes(result.as_ptr(), result.len() as u32) }
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/decimal.rs:214:5
+    |
+214 |     unsafe { js_string_from_bytes(result.as_ptr(), result.len() as u32) }
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+  --> crates/perry-stdlib/src/exponential_backoff.rs:48:23
+   |
+48 |         let promise = unsafe { js_promise_new() };
+   |                       ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+  --> crates/perry-stdlib/src/exponential_backoff.rs:49:9
+   |
+49 |         unsafe {
+   |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+  --> crates/perry-stdlib/src/exponential_backoff.rs:57:18
+   |
+57 |     let result = unsafe { js_closure_call0(fn_ptr) };
+   |                  ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+  --> crates/perry-stdlib/src/exponential_backoff.rs:74:19
+   |
+74 |     let promise = unsafe { js_promise_new() };
+   |                   ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+  --> crates/perry-stdlib/src/exponential_backoff.rs:77:9
+   |
+77 |         unsafe {
+   |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+  --> crates/perry-stdlib/src/exponential_backoff.rs:99:13
+   |
+99 |             unsafe {
+   |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/exponential_backoff.rs:109:22
+    |
+109 |         let result = unsafe { js_closure_call0(fn_ptr) };
+    |                      ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/exponential_backoff.rs:123:13
+    |
+123 |             unsafe {
+    |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/exponential_backoff.rs:152:22
+    |
+152 |         let result = unsafe { js_closure_call0(fn_ptr) };
+    |                      ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/worker_threads.rs:177:13
+    |
+177 |             unsafe {
+    |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/worker_threads.rs:190:13
+    |
+190 |             unsafe {
+    |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unused variable: `end_bytes`
+  --> crates/perry-stdlib/src/framework/multipart.rs:70:9
+   |
+70 |     let end_bytes = end_delimiter.as_bytes();
+   |         ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_end_bytes`
+
+warning: unused variable: `seg_idx`
+  --> crates/perry-stdlib/src/fastify/router.rs:98:14
+   |
+98 |         for (seg_idx, segment) in self.segments.iter().enumerate() {
+   |              ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_seg_idx`
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/fastify/server.rs:268:21
+    |
+268 |     let app = match unsafe { get_handle::<FastifyApp>(app_handle) } {
+    |                     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/fastify/server.rs:275:9
+    |
+275 |         unsafe { crate::common::js_stdlib_process_pending() };
+    |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/fastify/server.rs:298:30
+    |
+298 |             let ctx_handle = unsafe { register_handle(ctx) };
+    |                              ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/fastify/server.rs:342:34
+    |
+342 |                     let result = unsafe {
+    |                                  ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/fastify/server.rs:348:21
+    |
+348 |                     unsafe { crate::common::js_stdlib_process_pending() };
+    |                     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/fastify/server.rs:357:28
+    |
+357 | ...   if unsafe { perry_runtime::js_is_promise(ptr as *mut perry_runtim...
+    |          ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/fastify/server.rs:360:44
+    |
+360 | ...   final_result = unsafe { perry_runtime::js_promise_value(ptr as *m...
+    |                      ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/fastify/server.rs:367:32
+    |
+367 | ...   if let Some(ctx) = unsafe { get_handle::<FastifyContext>(ctx_hand...
+    |                          ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/fastify/server.rs:424:9
+    |
+424 |         unsafe { crate::common::js_stdlib_process_pending() };
+    |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/fastify/server.rs:428:21
+    |
+428 | ...   let state = unsafe { perry_runtime::js_promise_state(promise_ptr) };
+    |                   ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/fetch.rs:919:21
+    |
+919 | ...   let v_ptr = unsafe { js_string_from_bytes(v.as_ptr(), v.len() as ...
+    |                   ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/fetch.rs:920:21
+    |
+920 | ...   let k_ptr = unsafe { js_string_from_bytes(k.as_ptr(), k.len() as ...
+    |                   ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/fetch.rs:923:9
+    |
+923 |         unsafe {
+    |         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/pg/types.rs:167:17
+    |
+167 |                 unsafe {
+    |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/pg/types.rs:185:17
+    |
+185 |                 unsafe {
+    |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/mysql2/types.rs:269:17
+    |
+269 |                 unsafe {
+    |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/mysql2/types.rs:287:17
+    |
+287 |                 unsafe {
+    |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/mysql2/types.rs:298:17
+    |
+298 |                 unsafe {
+    |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/mysql2/types.rs:309:17
+    |
+309 |                 unsafe {
+    |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/mysql2/types.rs:320:17
+    |
+320 |                 unsafe {
+    |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> crates/perry-stdlib/src/mysql2/types.rs:327:17
+    |
+327 |                 unsafe {
+    |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unused variable: `len`
+   --> crates/perry-stdlib/src/ethers.rs:239:16
+    |
+239 |     let (data, len) = if buf_ptr.is_null() {
+    |                ^^^ help: if this is intentional, prefix it with an underscore: `_len`
+
+warning: variable does not need to be mutable
+   --> crates/perry-stdlib/src/nodemailer.rs:237:17
+    |
+237 |             let mut email_builder = Message::builder()
+    |                 ----^^^^^^^^^^^^^
+    |                 |
+    |                 help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `callback_id`
+   --> crates/perry-stdlib/src/cron.rs:453:40
+    |
+453 | ...n js_cron_set_interval(callback_id: f64, interval_ms: f64) -> Handle {
+    |                           ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_callback_id`
+
+warning: unused variable: `callback_id`
+   --> crates/perry-stdlib/src/cron.rs:489:39
+    |
+489 | ...fn js_cron_set_timeout(callback_id: f64, timeout_ms: f64) -> Handle {
+    |                           ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_callback_id`
+
+warning: unused variable: `ptr`
+   --> crates/perry-stdlib/src/ratelimit.rs:123:25
+    |
+123 |                     let ptr = js_string_from_bytes(result.as_ptr(), res...
+    |                         ^^^ help: if this is intentional, prefix it with an underscore: `_ptr`
+
+Some errors have detailed explanations: E0277, E0609.
+For more information about an error, try `rustc --explain E0277`.
+warning: `perry-stdlib` (lib) generated 73 warnings
+error: could not compile `perry-stdlib` (lib) due to 2 previous errors; 73 warnings emitted

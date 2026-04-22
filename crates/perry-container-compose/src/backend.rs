@@ -240,7 +240,7 @@ fn parse_image_info_from_json(json: &Value) -> Result<ImageInfo> {
     Ok(ImageInfo { id, repository: json["Repository"].as_str().unwrap_or("").to_string(), tag: json["Tag"].as_str().unwrap_or("").to_string(), size: json["Size"].as_u64().unwrap_or(0), created: json["Created"].as_str().unwrap_or("").to_string() })
 }
 
-pub async fn detect_backend() -> std::result::Result<Box<dyn ContainerBackend>, Vec<BackendProbeResult>> {
+pub async fn detect_backend() -> std::result::Result<Box<dyn ContainerBackend + Send + Sync>, Vec<BackendProbeResult>> {
     if let Ok(name) = std::env::var("PERRY_CONTAINER_BACKEND") {
         let res = probe_candidate(&name).await;
         if res.available { return Ok(make_backend(&name, PathBuf::from(res.reason))); }
@@ -343,7 +343,7 @@ async fn probe_candidate(name: &str) -> BackendProbeResult {
     }
 }
 
-fn make_backend(name: &str, bin: PathBuf) -> Box<dyn ContainerBackend> {
+fn make_backend(name: &str, bin: PathBuf) -> Box<dyn ContainerBackend + Send + Sync> {
     let driver = match name {
         "apple/container" => BackendDriver::AppleContainer { bin },
         "podman" => BackendDriver::Podman { bin },

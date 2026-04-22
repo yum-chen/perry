@@ -174,3 +174,7 @@ clap = { version = "4.4", features = ["derive"] }
 
 # Decimal math (Big.js / Decimal.js)
 rust_decimal = { version = "1.33", features = ["maths"] }
+
+[dev-dependencies]
+tokio = { workspace = true }
+proptest = "1"

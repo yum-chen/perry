@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0a48a2984fa24e13c922369d1a8c4b2b7b9be39c405a39d879d002c957077e42 # shrinks to key = "A", val = "", default = ""
+cc f190c54476780d03f15eec6b88a2e7ea7b0effe7b7dc63f07ff1a8759bf849f8 # shrinks to spec = ComposeSpec { name: None, version: None, services: {"svc-0": ComposeService { image: Some("$𑊀"), build: None, command: None, entrypoint: None, environment: None, env_file: None, ports: None, volumes: None, networks: None, depends_on: None, restart: None, healthcheck: None, container_name: None, labels: None, hostname: None, user: None, working_dir: None, privileged: None, read_only: None, stdin_open: None, tty: None, stop_signal: None, stop_grace_period: None, network_mode: None, pid: None, cap_add: None, cap_drop: None, security_opt: None, sysctls: None, ulimits: None, logging: None, deploy: None, develop: None, secrets: None, configs: None, expose: None, extra_hosts: None, dns: None, dns_search: None, tmpfs: None, shm_size: None, mem_limit: None, memswap_limit: None, cpus: None, cpu_shares: None, platform: None, pull_policy: None, profiles: None, scale: None, extends: None, post_start: None, pre_stop: None }}, networks: None, volumes: None, secrets: None, configs: None, include: None, models: None, extensions: {} }

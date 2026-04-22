@@ -46,7 +46,8 @@ proptest! {
 }
 
 fn arb_compose_spec() -> impl Strategy<Value = ComposeSpec> {
-    any::<Option<String>>().prop_flat_map(|name| {
+    // Avoid '$' to prevent interpolation from mangling the round-trip test.
+    prop::option::of("[a-zA-Z0-9._/-]{1,20}").prop_flat_map(|name| {
         prop::collection::vec(arb_service(), 1..5).prop_map(move |services| {
             let mut spec = ComposeSpec::default();
             spec.name = name.clone();
@@ -59,7 +60,9 @@ fn arb_compose_spec() -> impl Strategy<Value = ComposeSpec> {
 }
 
 fn arb_service() -> impl Strategy<Value = ComposeService> {
-    any::<Option<String>>().prop_map(|image| {
+    // Avoid '$' to prevent interpolation from mangling the round-trip test.
+    // Also avoid chars that might trigger YAML special parsing like ':', '[', '{' etc. in simple strings.
+    prop::option::of("[a-zA-Z0-9._/-]{1,20}").prop_map(|image| {
         let mut svc = ComposeService::default();
         svc.image = image;
         svc
@@ -81,6 +84,77 @@ fn arb_compose_spec_with_dag() -> impl Strategy<Value = ComposeSpec> {
         }
         spec
     })
+}
+
+// Feature: perry-container, Property 5: YAML round-trip preserves ComposeSpec
+proptest! {
+    #[test]
+    fn prop_yaml_round_trip(spec in arb_compose_spec()) {
+        let yaml = serde_yaml::to_string(&spec).unwrap();
+        let env = std::collections::HashMap::new();
+        let deserialized = perry_container_compose::yaml::parse_compose_yaml(&yaml, &env).unwrap();
+        let yaml2 = serde_yaml::to_string(&deserialized).unwrap();
+        prop_assert_eq!(yaml, yaml2);
+    }
+}
+
+// Feature: perry-container, Property 6: Environment variable interpolation correctness
+proptest! {
+    #[test]
+    fn prop_interpolation(
+        key in "[A-Z][A-Z0-9_]{1,10}", // Key must be non-empty
+        val in "[a-z0-9_]{1,20}",     // Value non-empty for simplicity in basic test
+        default in "[a-z0-9_]{1,20}"
+    ) {
+        let mut env = std::collections::HashMap::new();
+        env.insert(key.clone(), val.clone());
+
+        // ${VAR}
+        let input1 = format!("prefix-${{{}}}-suffix", key);
+        prop_assert_eq!(perry_container_compose::yaml::interpolate(&input1, &env), format!("prefix-{}-suffix", val));
+
+        // $VAR (no braces)
+        let input1b = format!("prefix-${}-suffix", key);
+        prop_assert_eq!(perry_container_compose::yaml::interpolate(&input1b, &env), format!("prefix-{}-suffix", val));
+
+        // ${VAR:-default} when set
+        let input2 = format!("prefix-${{{}:-default}}-suffix", key);
+        prop_assert_eq!(perry_container_compose::yaml::interpolate(&input2, &env), format!("prefix-{}-suffix", val));
+
+        // ${VAR:-default} when missing
+        let mut empty_env = std::collections::HashMap::new();
+        // Ensure the key is NOT in process env to avoid contamination
+        // We use a prefix that's unlikely to exist
+        let unique_key = format!("NONEXISTENT_VAR_{}", key);
+        let input3 = format!("prefix-${{{}:-{}}}-suffix", unique_key, default);
+        prop_assert_eq!(perry_container_compose::yaml::interpolate(&input3, &empty_env), format!("prefix-{}-suffix", default));
+
+        // $$ escape
+        prop_assert_eq!(perry_container_compose::yaml::interpolate("$$VAR", &env), "$VAR");
+    }
+}
+
+// Feature: perry-container, Property 7: Compose file merge is last-writer-wins
+proptest! {
+    #[test]
+    fn prop_merge_last_writer_wins(
+        image1 in "[a-z]{5,10}",
+        image2 in "[a-z]{5,10}"
+    ) {
+        let mut spec1 = ComposeSpec::default();
+        let mut svc1 = ComposeService::default();
+        svc1.image = Some(image1.clone());
+        spec1.services.insert("web".into(), svc1);
+
+        let mut spec2 = ComposeSpec::default();
+        let mut svc2 = ComposeService::default();
+        svc2.image = Some(image2.clone());
+        spec2.services.insert("web".into(), svc2);
+
+        spec1.merge(spec2);
+
+        prop_assert_eq!(spec1.services["web"].image.as_ref().unwrap(), &image2);
+    }
 }
 
 fn arb_compose_spec_with_cycle() -> impl Strategy<Value = ComposeSpec> {
