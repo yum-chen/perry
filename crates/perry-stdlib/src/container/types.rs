@@ -1,7 +1,7 @@
 //! Type re-exports for container module
 
 pub use perry_container_compose::types::*;
-pub use perry_container_compose::error::ComposeError;
+pub use perry_container_compose::error::{ComposeError, BackendProbeResult};
 
 use perry_runtime::JSValue;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -31,6 +31,10 @@ pub fn register_container_logs(_logs: ContainerLogs) -> u64 {
 }
 
 pub fn register_image_info_list(_list: Vec<ImageInfo>) -> u64 {
+    NEXT_CONTAINER_HANDLE.fetch_add(1, Ordering::SeqCst)
+}
+
+pub fn register_json_value(_val: serde_json::Value) -> u64 {
     NEXT_CONTAINER_HANDLE.fetch_add(1, Ordering::SeqCst)
 }
 

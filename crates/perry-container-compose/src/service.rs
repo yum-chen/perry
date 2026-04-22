@@ -1,25 +1,23 @@
-use crate::error::Result;
+use crate::error::{Result, ComposeError};
 use md5::{Digest, Md5};
+use crate::types::ComposeService;
 
-pub fn service_container_name(service: &crate::types::ComposeService, service_name: &str) -> String {
-    if let Some(name) = service.container_name.as_ref() {
-        return name.clone();
-    }
+pub fn generate_name(service: &ComposeService) -> Result<String> {
+    let yaml = serde_yaml::to_string(service)
+        .map_err(ComposeError::ParseError)?;
 
-    let image = service.image.as_deref().unwrap_or("unknown");
     let mut hasher = Md5::new();
-    hasher.update(image.as_bytes());
-    let hash = hex::encode(hasher.finalize());
-    let short_hash = &hash[..8];
+    hasher.update(yaml.as_bytes());
+    let hash = hasher.finalize();
+    let hash_str = hex::encode(hash);
 
+    let short_hash = &hash_str[..8];
     let random_suffix: u32 = rand::random();
+    Ok(format!("{}-{:08x}", short_hash, random_suffix))
+}
 
-    let safe_name: String = service_name
-        .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
-        .collect();
-
-    format!("{}-{}-{:08x}", safe_name, short_hash, random_suffix)
+pub fn needs_build(service: &ComposeService) -> bool {
+    service.build.is_some() && service.image.is_none()
 }
 
 pub struct ServiceState {

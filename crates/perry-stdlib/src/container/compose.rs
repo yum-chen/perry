@@ -1,19 +1,20 @@
 use indexmap::IndexMap;
 use crate::container::types::*;
-use crate::container::backend::ContainerBackend;
-use std::collections::BTreeSet;
+use crate::container::backend::{ContainerBackend, NetworkConfig, VolumeConfig};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
-use perry_container_compose::error::{ComposeError, Result};
+pub use perry_container_compose::error::{ComposeError, Result};
 
 #[derive(Clone)]
 pub struct ComposeEngine {
     pub spec: ComposeSpec,
-    pub backend: Arc<dyn ContainerBackend>,
+    pub project_name: String,
+    pub backend: Arc<dyn ContainerBackend + Send + Sync>,
 }
 
 impl ComposeEngine {
-    pub fn new(spec: ComposeSpec, backend: Arc<dyn ContainerBackend>) -> Self {
-        Self { spec, backend }
+    pub fn new(spec: ComposeSpec, project_name: String, backend: Arc<dyn ContainerBackend + Send + Sync>) -> Self {
+        Self { spec, project_name, backend }
     }
 
     pub fn resolve_startup_order(spec: &ComposeSpec) -> Result<Vec<String>> {
@@ -71,16 +72,25 @@ impl ComposeEngine {
         Ok(order)
     }
 
-    pub async fn up(&self) -> Result<ComposeHandle> {
+    pub async fn up(&self, _services: &[String], _detach: bool, _build: bool, _remove_orphans: bool) -> Result<ComposeHandle> {
         let order = Self::resolve_startup_order(&self.spec)?;
         let mut created_networks = Vec::new();
         let mut created_volumes = Vec::new();
         let mut started_containers: Vec<(String, ContainerHandle)> = Vec::new();
 
         if let Some(networks) = &self.spec.networks {
-            for (name, config) in networks {
-                let config = config.clone().unwrap_or_default();
-                if let Err(e) = self.backend.create_network(name, &config).await {
+            for (name, config_opt) in networks {
+                let config = config_opt.as_ref();
+                let net_config = NetworkConfig {
+                    driver: config.and_then(|c| c.driver.clone()),
+                    labels: match config.and_then(|c| c.labels.as_ref()) {
+                        Some(ListOrDict::Dict(d)) => d.iter().map(|(k, v)| (k.clone(), v.as_ref().and_then(|val| val.as_str()).unwrap_or("").to_string())).collect(),
+                        _ => HashMap::new(),
+                    },
+                    internal: config.and_then(|c| c.internal).unwrap_or(false),
+                    enable_ipv6: config.and_then(|c| c.enable_ipv6).unwrap_or(false),
+                };
+                if let Err(e) = self.backend.create_network(name, &net_config).await {
                     self.rollback(&started_containers, &created_networks, &created_volumes).await;
                     return Err(e);
                 }
@@ -89,9 +99,16 @@ impl ComposeEngine {
         }
 
         if let Some(volumes) = &self.spec.volumes {
-            for (name, config) in volumes {
-                let config = config.clone().unwrap_or_default();
-                if let Err(e) = self.backend.create_volume(name, &config).await {
+            for (name, config_opt) in volumes {
+                let config = config_opt.as_ref();
+                let vol_config = VolumeConfig {
+                    driver: config.and_then(|c| c.driver.clone()),
+                    labels: match config.and_then(|c| c.labels.as_ref()) {
+                        Some(ListOrDict::Dict(d)) => d.iter().map(|(k, v)| (k.clone(), v.as_ref().and_then(|val| val.as_str()).unwrap_or("").to_string())).collect(),
+                        _ => HashMap::new(),
+                    },
+                };
+                if let Err(e) = self.backend.create_volume(name, &vol_config).await {
                     self.rollback(&started_containers, &created_networks, &created_volumes).await;
                     return Err(e);
                 }
@@ -101,18 +118,29 @@ impl ComposeEngine {
 
         for service_name in order {
             let service = self.spec.services.get(&service_name).unwrap();
+            let image = service.image.clone().unwrap_or_default();
+
+            if let Err(e) = self.backend.pull_image(&image).await {
+                 self.rollback(&started_containers, &created_networks, &created_volumes).await;
+                 return Err(ComposeError::ImagePullFailed {
+                     service: service_name,
+                     image: image.clone(),
+                     message: e.to_string(),
+                 });
+            }
+
             let container_spec = ContainerSpec {
-                image: service.image.clone().unwrap_or_default(),
+                image: image.clone(),
                 name: Some(service_name.clone()),
                 ports: service.ports.as_ref().map(|p| p.iter().map(|ps| format!("{:?}", ps)).collect()),
                 volumes: service.volumes.as_ref().map(|v| v.iter().map(|vs| format!("{:?}", vs)).collect()),
                 env: match &service.environment {
-                    Some(ListOrDict::Dict(d)) => Some(d.iter().map(|(k, v)| (k.clone(), format!("{:?}", v))).collect()),
+                    Some(ListOrDict::Dict(d)) => Some(d.iter().map(|(k, v)| (k.clone(), v.as_ref().and_then(|val| val.as_str()).unwrap_or("").to_string())).collect()),
                     _ => None,
                 },
                 cmd: match &service.command {
                     Some(serde_yaml::Value::String(s)) => Some(vec![s.clone()]),
-                    Some(serde_yaml::Value::Sequence(seq)) => Some(seq.iter().map(|v| format!("{:?}", v)).collect()),
+                    Some(serde_yaml::Value::Sequence(seq)) => Some(seq.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect()),
                     _ => None,
                 },
                 entrypoint: None,
@@ -137,7 +165,7 @@ impl ComposeEngine {
 
         Ok(ComposeHandle {
             stack_id: rand::random(),
-            project_name: self.spec.name.clone().unwrap_or_else(|| "default".into()),
+            project_name: self.project_name.clone(),
             services: started_containers.iter().map(|(n, _)| n.clone()).collect(),
         })
     }
@@ -155,7 +183,7 @@ impl ComposeEngine {
         }
     }
 
-    pub async fn down(&self, volumes: bool) -> Result<()> {
+    pub async fn down(&self, volumes: bool, _remove_orphans: bool) -> Result<()> {
         let order = Self::resolve_startup_order(&self.spec)?;
         for service_name in order.iter().rev() {
              let _ = self.backend.remove(service_name, true).await;
