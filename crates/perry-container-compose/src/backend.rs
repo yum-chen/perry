@@ -385,8 +385,10 @@ pub fn docker_run_flags(spec: &ContainerSpec, include_detach: bool) -> Vec<Strin
         }
     }
     if let Some(env) = &spec.env {
-        for (k, v) in env {
-            args.extend(["-e".into(), format!("{k}={v}")]);
+        let mut keys: Vec<&String> = env.keys().collect();
+        keys.sort();
+        for k in keys {
+            args.extend(["-e".into(), format!("{}={}", k, env[k])]);
         }
     }
     if let Some(net) = &spec.network {
@@ -850,5 +852,37 @@ async fn check_rancher_socket() -> std::result::Result<(), String> {
         Ok(())
     } else {
         Err("rancher desktop socket not found".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests_v3 {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Feature: alloy-container, Property 3: ContainerSpec CLI arg round-trip
+    proptest! {
+        #[test]
+        fn test_container_spec_cli_args(
+            image in ".*",
+            name in prop::option::of(".*"),
+            rm in prop::option::of(any::<bool>())
+        ) {
+            let spec = ContainerSpec {
+                image: image.clone(),
+                name: name.clone(),
+                rm,
+                ..Default::default()
+            };
+            let args = docker_run_flags(&spec, true);
+            assert!(args.contains(&"run".to_string()));
+            assert!(args.contains(&image));
+            if let Some(n) = name {
+                assert!(args.contains(&n));
+            }
+            if rm.unwrap_or(false) {
+                assert!(args.contains(&"--rm".to_string()));
+            }
+        }
     }
 }

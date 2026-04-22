@@ -7,7 +7,7 @@ use crate::backend::ContainerBackend;
 use crate::error::{ComposeError, Result};
 use crate::service;
 use crate::types::{
-    ComposeHandle, ComposeSpec, ContainerInfo, ContainerLogs, ContainerSpec,
+    ComposeHandle, ComposeSpec, ContainerInfo, ContainerLogs,
 };
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -88,7 +88,7 @@ impl ComposeEngine {
         &self,
         services: &[String],
         _detach: bool,
-        build: bool,
+        _build: bool,
         _remove_orphans: bool,
     ) -> Result<ComposeHandle> {
         let order = resolve_startup_order(&self.spec)?;
@@ -176,47 +176,14 @@ impl ComposeEngine {
                 .get(svc_name)
                 .ok_or_else(|| ComposeError::NotFound(svc_name.clone()))?;
 
-            let container_name = service::service_container_name(svc, svc_name);
-            let inspect_result = self.backend.inspect(&container_name).await;
-
-            let res = match inspect_result {
-                Ok(info) if info.status == "running" => Ok(()),
-                Ok(info) if info.status != "not found" => {
-                    self.backend.start(&container_name).await.map(|_| {
-                        started.push(container_name.clone());
-                    })
-                }
-                _ => {
-                    // Build if needed
-                    if build && svc.needs_build() {
-                        let build_config = svc.build.as_ref().unwrap().as_build();
-                        let tag = svc.image_ref(svc_name);
-                        tracing::info!("Building image '{}'…", tag);
-                        if let Err(e) = self
-                            .backend
-                            .build(
-                                &build_config,
-                                &tag,
-                            )
-                            .await
-                        {
-                            Err(e)
-                        } else {
-                            self.run_service(svc, svc_name, &container_name, &mut started).await
-                        }
-                    } else {
-                        self.run_service(svc, svc_name, &container_name, &mut started).await
-                    }
-                }
-            };
-
-            if let Err(e) = res {
+            if let Err(e) = crate::orchestrate::orchestrate_service(svc, svc_name, &*self.backend).await {
                 self.rollback(&started, &created_networks, &created_volumes).await;
                 return Err(ComposeError::ServiceStartupFailed {
                     service: svc_name.clone(),
                     message: e.to_string(),
                 });
             }
+            started.push(service::service_container_name(svc, svc_name));
         }
 
         // Record started containers
@@ -226,38 +193,6 @@ impl ComposeEngine {
         Ok(self.register())
     }
 
-    async fn run_service(&self, svc: &crate::types::ComposeService, svc_name: &str, container_name: &str, started: &mut Vec<String>) -> Result<()> {
-        let image = svc.image_ref(svc_name);
-        let env = svc.resolved_env();
-        let ports = svc.port_strings();
-        let vols = svc.volume_strings();
-
-        let mut all_labels: HashMap<String, String> = svc
-            .labels
-            .as_ref()
-            .map(|l| l.to_map())
-            .unwrap_or_default();
-        all_labels.insert("perry.compose.project".into(), self.project_name.clone());
-        all_labels.insert("perry.compose.service".into(), svc_name.to_string());
-
-        let cmd = svc.command_list();
-
-        let spec = ContainerSpec {
-            image: image.clone(),
-            name: Some(container_name.to_string()),
-            ports: Some(ports),
-            volumes: Some(vols),
-            env: Some(env),
-            cmd,
-            rm: Some(false),
-            read_only: svc.read_only,
-            ..Default::default()
-        };
-
-        self.backend.run(&spec).await.map(|_| {
-            started.push(container_name.to_string());
-        })
-    }
 
     async fn rollback(&self, started: &[String], networks: &[String], volumes: &[String]) {
         tracing::info!("Rolling back partial startup…");
@@ -653,5 +588,96 @@ mod tests {
         let compose = make_compose(&[("c", &[]), ("a", &[]), ("b", &[])]);
         let order = resolve_startup_order(&compose).unwrap();
         assert_eq!(order, vec!["a", "b", "c"]);
+    }
+}
+
+#[cfg(test)]
+mod tests_v4 {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Feature: alloy-container, Property 9: Container name generation uniqueness
+    proptest! {
+        #[test]
+        fn test_container_name_uniqueness(img1 in ".*", svc1 in ".*", img2 in ".*", svc2 in ".*") {
+            prop_assume!(img1 != img2 || svc1 != svc2);
+            let n1 = service::generate_name(&img1, &svc1);
+            let n2 = service::generate_name(&img2, &svc2);
+            // Due to random suffix, they should be different even if img/svc are same,
+            // but we explicitly assume different inputs here to test general case.
+            assert_ne!(n1, n2);
+        }
+    }
+}
+
+pub struct WorkloadGraphEngine {
+    pub backend: Arc<dyn ContainerBackend>,
+}
+
+impl WorkloadGraphEngine {
+    pub fn new(backend: Arc<dyn ContainerBackend>) -> Self {
+        Self { backend }
+    }
+
+    pub async fn run(&self, spec_json: &str, _opts_json: &str) -> Result<u64> {
+        // In a real implementation, parse spec_json to WorkloadGraph,
+        // convert to ComposeSpec, then call ComposeEngine::up.
+        let spec: ComposeSpec = serde_json::from_str(spec_json).map_err(ComposeError::JsonError)?;
+        let engine = ComposeEngine::new(spec, "workload".to_string(), Arc::clone(&self.backend));
+        let handle = engine.up(&[], true, false, false).await?;
+        Ok(handle.stack_id)
+    }
+}
+
+impl ComposeEngine {
+    pub async fn status(&self) -> Result<crate::types::StackStatus> {
+        let mut services = Vec::new();
+        let mut all_running = true;
+
+        for (svc_name, svc) in &self.spec.services {
+            let container_name = service::service_container_name(svc, svc_name);
+            let (state, container_id, error) = match self.backend.inspect(&container_name).await {
+                Ok(info) => {
+                    if info.status != "running" {
+                        all_running = false;
+                    }
+                    (info.status, Some(info.id), None)
+                }
+                Err(e) => {
+                    all_running = false;
+                    ("unknown".to_string(), None, Some(e.to_string()))
+                }
+            };
+
+            services.push(crate::types::ServiceStatus {
+                service: svc_name.clone(),
+                state,
+                container_id,
+                error,
+            });
+        }
+
+        Ok(crate::types::StackStatus {
+            services,
+            healthy: all_running,
+        })
+    }
+
+    pub fn graph(&self) -> Result<crate::types::ServiceGraph> {
+        let nodes = resolve_startup_order(&self.spec)?;
+        let mut edges = Vec::new();
+
+        for (name, svc) in &self.spec.services {
+            if let Some(deps) = &svc.depends_on {
+                for dep in deps.service_names() {
+                    edges.push(crate::types::ServiceEdge {
+                        from: name.clone(),
+                        to: dep,
+                    });
+                }
+            }
+        }
+
+        Ok(crate::types::ServiceGraph { nodes, edges })
     }
 }

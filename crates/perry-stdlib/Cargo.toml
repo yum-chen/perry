@@ -173,6 +173,8 @@ regex = { version = "1.10", optional = true }
 uuid = { version = "1.11", features = ["v4", "v1", "v7"], optional = true }
 nanoid = { version = "0.4", optional = true }
 
+indexmap = { version = "2.2", features = ["serde"] }
+
 # Container module
 async-trait = { version = "0.1", optional = true }
 perry-container-compose = { path = "../perry-container-compose", optional = true }
