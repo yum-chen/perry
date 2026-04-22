@@ -1,139 +1,289 @@
-//! FFI contract tests for perry/container and perry/compose.
-//!
-//! These tests verify that FFI functions handle null pointers and malformed
-//! JSON correctly by returning a valid promise that eventually rejects.
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
 
-use perry_runtime::{js_promise_state, js_promise_run_microtasks, Promise, StringHeader};
-use perry_stdlib::container::*;
-use std::ptr;
+use perry_runtime::{Promise, StringHeader};
+use std::ptr::null;
 
-const PROMISE_STATE_PENDING: i32 = 0;
-const PROMISE_STATE_FULFILLED: i32 = 1;
-const PROMISE_STATE_REJECTED: i32 = 2;
-
-/// Helper to create a fake StringHeader on the stack for testing.
+/// Helper to create a StringHeader for testing
 fn make_string_header(s: &str) -> Vec<u8> {
     let bytes = s.as_bytes();
     let len = bytes.len() as u32;
-    let mut header_bytes = vec![0u8; std::mem::size_of::<StringHeader>() + bytes.len()];
+    let header_size = std::mem::size_of::<StringHeader>();
+    let mut buf = vec![0u8; header_size + bytes.len()];
+
+    let header = StringHeader {
+        utf16_len: s.chars().count() as u32,
+        byte_len: len,
+        capacity: len,
+        refcount: 0,
+    };
+
     unsafe {
-        let header = header_bytes.as_mut_ptr() as *mut StringHeader;
-        (*header).utf16_len = s.chars().count() as u32;
-        (*header).byte_len = len;
-        (*header).capacity = len;
-        (*header).refcount = 0;
-        let data_ptr = header_bytes.as_mut_ptr().add(std::mem::size_of::<StringHeader>());
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), data_ptr, bytes.len());
+        std::ptr::copy_nonoverlapping(
+            &header as *const StringHeader as *const u8,
+            buf.as_mut_ptr(),
+            header_size
+        );
     }
-    header_bytes
+    buf[header_size..].copy_from_slice(bytes);
+    buf
 }
 
-/// Drive the promise to completion by running microtasks and processing pending stdlib ops.
-fn drive_promise(promise: *mut Promise) {
-    // In a real environment, the tokio runtime would run the spawned task.
-    // Here we need to ensure the task has a chance to run.
-    // Since we are testing early validation errors, they often happen before spawning
-    // or the spawned task finishes immediately.
+/// Safe helper to call an FFI function and drive the promise to completion
+unsafe fn await_promise_sync(promise: *mut Promise) -> Result<u64, String> {
+    assert!(!promise.is_null(), "FFI function must return a non-null promise");
 
-    let mut iterations = 0;
-    while js_promise_state(promise) == PROMISE_STATE_PENDING && iterations < 100 {
-        unsafe {
-            perry_stdlib::common::js_stdlib_process_pending();
-            js_promise_run_microtasks();
+    let mut count = 0;
+    loop {
+        perry_runtime::js_promise_run_microtasks();
+        perry_stdlib::common::js_stdlib_process_pending();
+
+        let state = perry_runtime::js_promise_state(promise);
+        if state == 1 { // Resolved
+            return Ok(perry_runtime::js_promise_value(promise) as u64);
+        } else if state == 2 { // Rejected
+            return Err("Promise rejected".to_string());
+        }
+
+        count += 1;
+        if count > 200 {
+            return Err("Promise timed out".to_string());
         }
         std::thread::yield_now();
-        iterations += 1;
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }
 
-// ============ js_container_run ============
+// ========== js_container_run ==========
 
-// Feature: perry-container | Layer: ffi-contract | Req: 11.1 | Property: -
-#[test]
-fn test_js_container_run_null() {
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_run_null() {
     unsafe {
-        let p = js_container_run(ptr::null());
-        assert!(!p.is_null());
-        drive_promise(p);
-        assert_eq!(js_promise_state(p), PROMISE_STATE_REJECTED);
+        let p = perry_stdlib::container::js_container_run(null());
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
     }
 }
 
-// Feature: perry-container | Layer: ffi-contract | Req: 11.1 | Property: -
-#[test]
-fn test_js_container_run_malformed() {
-    let header = make_string_header("{invalid json}");
+// ========== js_container_list ==========
+
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_list_contract() {
     unsafe {
-        let p = js_container_run(header.as_ptr() as *const StringHeader);
-        assert!(!p.is_null());
-        drive_promise(p);
-        assert_eq!(js_promise_state(p), PROMISE_STATE_REJECTED);
+        let p = perry_stdlib::container::js_container_list(1);
+        let _ = await_promise_sync(p);
     }
 }
 
-// ============ js_container_composeUp ============
+// ========== js_container_listImages ==========
 
-// Feature: perry-container | Layer: ffi-contract | Req: 6.1 | Property: -
-#[test]
-fn test_js_container_composeUp_null() {
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_list_images_contract() {
     unsafe {
-        let p = js_container_composeUp(ptr::null());
-        assert!(!p.is_null());
-        drive_promise(p);
-        assert_eq!(js_promise_state(p), PROMISE_STATE_REJECTED);
+        let p = perry_stdlib::container::js_container_listImages();
+        let _ = await_promise_sync(p);
     }
 }
 
-// Feature: perry-container | Layer: ffi-contract | Req: 6.1 | Property: -
+// ========== js_container_getBackend ==========
+
+// Feature: perry-container | Layer: ffi-contract | Req: 1.4 | Property: -
 #[test]
-fn test_js_container_composeUp_malformed() {
-    let header = make_string_header("not a json object");
+fn test_js_container_get_backend_contract() {
     unsafe {
-        let p = js_container_composeUp(header.as_ptr() as *const StringHeader);
-        assert!(!p.is_null());
-        drive_promise(p);
-        assert_eq!(js_promise_state(p), PROMISE_STATE_REJECTED);
+        let header = perry_stdlib::container::js_container_getBackend();
+        assert!(!header.is_null());
     }
 }
 
-// ============ js_compose_ps ============
+// ========== js_container_detectBackend ==========
 
-// Feature: perry-container | Layer: ffi-contract | Req: 6.6 | Property: -
-#[test]
-fn test_js_compose_ps_not_found() {
+// Feature: perry-container | Layer: ffi-contract | Req: 1.8 | Property: -
+#[tokio::test]
+async fn test_js_container_detect_backend_contract() {
     unsafe {
-        // Stack ID 99999 should not exist
-        let p = js_compose_ps(99999.0);
-        assert!(!p.is_null());
-        drive_promise(p);
-        assert_eq!(js_promise_state(p), PROMISE_STATE_REJECTED);
+        let p = perry_stdlib::container::js_container_detectBackend();
+        let _ = await_promise_sync(p);
     }
 }
 
-// ============ js_container_inspect ============
+// ========== js_container_compose_ps ==========
 
-// Feature: perry-container | Layer: ffi-contract | Req: 3.1 | Property: -
-#[test]
-fn test_js_container_inspect_null() {
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_compose_ps_contract() {
     unsafe {
-        let p = js_container_inspect(ptr::null());
-        assert!(!p.is_null());
-        drive_promise(p);
-        assert_eq!(js_promise_state(p), PROMISE_STATE_REJECTED);
+        let p = perry_stdlib::container::js_container_compose_ps(0);
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
     }
 }
 
-/*
-Coverage Table:
-| Requirement | Test name | Layer |
-|-------------|-----------|-------|
-| 11.1        | test_js_container_run_null | ffi-contract |
-| 11.1        | test_js_container_run_malformed | ffi-contract |
-| 6.1         | test_js_container_composeUp_null | ffi-contract |
-| 6.1         | test_js_container_composeUp_malformed | ffi-contract |
-| 6.6         | test_js_compose_ps_not_found | ffi-contract |
-| 3.1         | test_js_container_inspect_null | ffi-contract |
+// ========== js_container_compose_logs ==========
 
-Deferred Requirements:
-- none
-*/
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_compose_logs_null() {
+    unsafe {
+        let p = perry_stdlib::container::js_container_compose_logs(0, null(), 10);
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}
+
+// ========== js_container_compose_exec ==========
+
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_compose_exec_null() {
+    unsafe {
+        let p = perry_stdlib::container::js_container_compose_exec(0, null(), null());
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}
+
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_run_malformed() {
+    unsafe {
+        let header = make_string_header("{ bad json");
+        let p = perry_stdlib::container::js_container_run(header.as_ptr() as *const StringHeader);
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}
+
+// ========== js_container_create ==========
+
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_create_null() {
+    unsafe {
+        let p = perry_stdlib::container::js_container_create(null());
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}
+
+// ========== js_container_start ==========
+
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_start_null() {
+    unsafe {
+        let p = perry_stdlib::container::js_container_start(null());
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}
+
+// ========== js_container_stop ==========
+
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_stop_null() {
+    unsafe {
+        let p = perry_stdlib::container::js_container_stop(null(), 10);
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}
+
+// ========== js_container_remove ==========
+
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_remove_null() {
+    unsafe {
+        let p = perry_stdlib::container::js_container_remove(null(), 1);
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}
+
+// ========== js_container_inspect ==========
+
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_inspect_null() {
+    unsafe {
+        let p = perry_stdlib::container::js_container_inspect(null());
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}
+
+// ========== js_container_logs ==========
+
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_logs_null() {
+    unsafe {
+        let p = perry_stdlib::container::js_container_logs(null(), 10);
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}
+
+// ========== js_container_exec ==========
+
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_exec_null() {
+    unsafe {
+        let p = perry_stdlib::container::js_container_exec(null(), null(), null(), null());
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}
+
+// ========== js_container_pullImage ==========
+
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_pull_image_null() {
+    unsafe {
+        let p = perry_stdlib::container::js_container_pullImage(null());
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}
+
+// ========== js_container_removeImage ==========
+
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_remove_image_null() {
+    unsafe {
+        let p = perry_stdlib::container::js_container_removeImage(null(), 0);
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}
+
+// ========== js_container_composeUp ==========
+
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_compose_up_null() {
+    unsafe {
+        let p = perry_stdlib::container::js_container_composeUp(null());
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}
+
+// ========== js_container_compose_down ==========
+
+// Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
+#[tokio::test]
+async fn test_js_container_compose_down_contract() {
+    unsafe {
+        let p = perry_stdlib::container::js_container_compose_down(0, 1);
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}

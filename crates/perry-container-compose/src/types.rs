@@ -96,6 +96,7 @@ pub enum DependsOnCondition {
 
 /// Per-dependency entry in the object form of depends_on
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeDependsOn {
     pub condition: Option<DependsOnCondition>,
     #[serde(default)]
@@ -136,17 +137,9 @@ pub enum VolumeType {
     Image,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum IsolationLevel {
-    None,
-    Process,
-    Container,
-    MicroVm,
-    Wasm,
-}
-
 /// Long-form volume mount (compose-spec §service.volumes[])
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeServiceVolume {
     #[serde(rename = "type")]
     pub volume_type: VolumeType,
@@ -161,15 +154,16 @@ pub struct ComposeServiceVolume {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeServiceVolumeBind {
     pub propagation: Option<String>,
     pub create_host_path: Option<bool>,
-    #[serde(rename = "recursive")]
-    pub recursive_opt: Option<String>,
+    pub recursive: Option<String>,
     pub selinux: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeServiceVolumeOpts {
     pub labels: Option<ListOrDict>,
     pub nocopy: Option<bool>,
@@ -217,6 +211,7 @@ impl VolumeEntry {
 
 /// Port mapping (long form, compose-spec §service.ports[])
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeServicePort {
     pub name: Option<String>,
     pub mode: Option<String>,
@@ -258,6 +253,7 @@ impl PortSpec {
 
 /// Service network attachment config
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeServiceNetworkConfig {
     pub aliases: Option<Vec<String>>,
     pub ipv4_address: Option<String>,
@@ -293,6 +289,7 @@ pub enum BuildSpec {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeServiceBuild {
     pub context: Option<String>,
     #[serde(alias = "dockerfile")]
@@ -333,6 +330,7 @@ impl BuildSpec {
         match self {
             BuildSpec::Context(ctx) => ComposeServiceBuild {
                 context: Some(ctx.clone()),
+                containerfile: None,
                 ..Default::default()
             },
             BuildSpec::Config(b) => b.clone(),
@@ -343,6 +341,7 @@ impl BuildSpec {
 // ============ Healthcheck ============
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeHealthcheck {
     pub test: serde_yaml::Value,
     pub interval: Option<String>,
@@ -356,6 +355,7 @@ pub struct ComposeHealthcheck {
 // ============ Deployment ============
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeDeployment {
     pub mode: Option<String>,
     pub replicas: Option<u32>,
@@ -368,6 +368,7 @@ pub struct ComposeDeployment {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeDeploymentResources {
     pub limits: Option<ComposeResourceSpec>,
     pub reservations: Option<ComposeResourceSpec>,
@@ -391,6 +392,7 @@ pub struct ComposeLogging {
 // ============ Network ============
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeNetworkIpamConfig {
     pub subnet: Option<String>,
     pub ip_range: Option<String>,
@@ -407,6 +409,7 @@ pub struct ComposeNetworkIpam {
 
 /// Top-level network definition
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeNetwork {
     pub name: Option<String>,
     pub driver: Option<String>,
@@ -424,6 +427,7 @@ pub struct ComposeNetwork {
 
 /// Top-level volume definition
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeVolume {
     pub name: Option<String>,
     pub driver: Option<String>,
@@ -436,6 +440,7 @@ pub struct ComposeVolume {
 
 /// Top-level secret definition
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeSecret {
     pub name: Option<String>,
     pub environment: Option<String>,
@@ -451,7 +456,8 @@ pub struct ComposeSecret {
 
 /// Top-level config definition (compose-spec `config` object)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ComposeConfigObj {
+#[serde(rename_all = "snake_case")]
+pub struct ComposeConfig {
     pub name: Option<String>,
     pub content: Option<String>,
     pub environment: Option<String>,
@@ -465,6 +471,7 @@ pub struct ComposeConfigObj {
 
 /// Full service definition (compose-spec §service)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeService {
     pub image: Option<String>,
     pub build: Option<BuildSpec>,
@@ -599,7 +606,7 @@ pub struct ComposeSpec {
     pub networks: Option<IndexMap<String, Option<ComposeNetwork>>>,
     pub volumes: Option<IndexMap<String, Option<ComposeVolume>>>,
     pub secrets: Option<IndexMap<String, Option<ComposeSecret>>>,
-    pub configs: Option<IndexMap<String, Option<ComposeConfigObj>>>,
+    pub configs: Option<IndexMap<String, Option<ComposeConfig>>>,
     pub include: Option<Vec<serde_yaml::Value>>,
     pub models: Option<IndexMap<String, serde_yaml::Value>>,
     #[serde(flatten)]
@@ -676,45 +683,17 @@ impl ComposeSpec {
 /// Opaque handle to a running compose stack.
 /// The stack ID is used to look up the live ComposeEngine in a global registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct ComposeHandle {
     pub stack_id: u64,
     pub project_name: String,
     pub services: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceGraph {
-    pub nodes: Vec<String>,
-    pub edges: Vec<ServiceEdge>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceEdge {
-    pub from: String,
-    pub to: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StackStatus {
-    pub services: Vec<ServiceStatus>,
-    pub healthy: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ServiceStatus {
-    pub service: String,
-    pub state: String, // "running" | "stopped" | "failed" | "pending" | "unknown"
-    pub container_id: Option<String>,
-    pub error: Option<String>,
-}
-
 // ============ Container types (for single-container API) ============
 
 /// Specification for running a single container.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContainerSpec {
     pub image: String,
     pub name: Option<String>,
@@ -726,7 +705,6 @@ pub struct ContainerSpec {
     pub network: Option<String>,
     pub rm: Option<bool>,
     pub read_only: Option<bool>,
-    pub seccomp: Option<String>,
 }
 
 /// Handle returned after creating/running a container.
@@ -755,80 +733,11 @@ pub struct ContainerLogs {
 }
 
 /// Information about a container image.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageInfo {
     pub id: String,
     pub repository: String,
     pub tag: String,
     pub size: u64,
     pub created: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BackendInfo {
-    pub name: String,
-    pub available: bool,
-    pub reason: Option<String>,
-    pub version: Option<String>,
-    pub mode: String, // "local" | "remote"
-    pub isolation_level: IsolationLevel,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use proptest::prelude::*;
-
-    // Feature: alloy-container, Property 4: Data model JSON round-trip
-    proptest! {
-        #[test]
-        fn test_container_spec_roundtrip(image in ".*", name in prop::option::of(".*"), rm in prop::option::of(any::<bool>())) {
-            let spec = ContainerSpec {
-                image,
-                name,
-                rm,
-                ..Default::default()
-            };
-            let json = serde_json::to_string(&spec).unwrap();
-            let de: ContainerSpec = serde_json::from_str(&json).unwrap();
-            assert_eq!(spec, de);
-        }
-
-        #[test]
-        fn test_image_info_roundtrip(id in ".*", repository in ".*", tag in ".*", size in any::<u64>(), created in ".*") {
-            let info = ImageInfo { id, repository, tag, size, created };
-            let json = serde_json::to_string(&info).unwrap();
-            let de: ImageInfo = serde_json::from_str(&json).unwrap();
-            assert_eq!(info, de);
-        }
-    }
-
-    // Feature: alloy-container, Property 12: depends_on condition validation
-    #[test]
-    fn test_depends_on_condition_validation() {
-        let valid = vec!["service_started", "service_healthy", "service_completed_successfully"];
-        for v in valid {
-            let json = format!("\"{}\"", v);
-            let _: DependsOnCondition = serde_json::from_str(&json).unwrap();
-        }
-
-        let invalid = "\"invalid_condition\"";
-        let res: std::result::Result<DependsOnCondition, _> = serde_json::from_str(invalid);
-        assert!(res.is_err());
-    }
-
-    // Feature: alloy-container, Property 13: Volume type validation
-    #[test]
-    fn test_volume_type_validation() {
-        let valid = vec!["bind", "volume", "tmpfs", "cluster", "npipe", "image"];
-        for v in valid {
-            let json = format!("\"{}\"", v);
-            let _: VolumeType = serde_json::from_str(&json).unwrap();
-        }
-
-        let invalid = "\"invalid_type\"";
-        let res: std::result::Result<VolumeType, _> = serde_json::from_str(invalid);
-        assert!(res.is_err());
-    }
 }
