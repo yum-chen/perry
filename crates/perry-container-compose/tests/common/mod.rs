@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use perry_container_compose::backend::{ContainerBackend, NetworkConfig, VolumeConfig, SecurityProfile};
+use perry_container_compose::backend::{ContainerBackend, NetworkConfig, VolumeConfig, SecurityProfile, ExecutionStrategy};
 use perry_container_compose::types::{
     ContainerHandle, ContainerInfo, ContainerLogs, ImageInfo,
     ContainerSpec
@@ -150,4 +150,12 @@ impl ContainerBackend for MockBackend {
     async fn manifest_inspect(&self, _reference: &str) -> Result<serde_json::Value> { Ok(serde_json::json!({})) }
     async fn run_with_security(&self, spec: &ContainerSpec, _profile: &SecurityProfile) -> Result<ContainerHandle> { self.run(spec).await }
     async fn wait_and_logs(&self, id: &str) -> Result<ContainerLogs> { self.logs(id, None).await }
+
+    fn strategy(&self) -> ExecutionStrategy {
+        ExecutionStrategy::CliExec { bin: "mock".into() }
+    }
+
+    fn isolation_level(&self) -> perry_container_compose::types::IsolationLevel {
+        perry_container_compose::types::IsolationLevel::Container
+    }
 }

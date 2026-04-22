@@ -128,9 +128,8 @@ pub async fn run(cli: Cli) -> Result<()> {
     );
     let project = ComposeProject::load(&config)?;
     let backend = crate::backend::detect_backend()
-        .await
-        .map_err(|probed| crate::error::ComposeError::NoBackendFound { probed })?;
-    let engine = ComposeEngine::new(project.spec.clone(), project.project_name.clone(), backend);
+        .await?;
+    let engine = ComposeEngine::new(project.spec.clone(), project.project_name.clone(), backend.into());
 
     match cli.command {
         Commands::Up(args) => {

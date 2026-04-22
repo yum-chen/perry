@@ -8,7 +8,8 @@ pub use crate::types::ContainerLogs;
 use crate::error::{ComposeError, Result};
 use crate::service;
 use crate::types::{
-    ComposeHandle, ComposeSpec, ContainerInfo, ContainerSpec,
+    ComposeHandle, ComposeSpec, ContainerInfo, ContainerSpec, ServiceEdge, ServiceGraph,
+    ServiceState, ServiceStatus, StackStatus,
 };
 use crate::backend::{NetworkConfig, VolumeConfig};
 use indexmap::IndexMap;
@@ -51,19 +52,21 @@ impl ComposeEngine {
     fn register(&self) -> ComposeHandle {
         let stack_id = NEXT_STACK_ID.fetch_add(1, Ordering::SeqCst);
         let services: Vec<String> = self.spec.services.keys().cloned().collect();
+        let graph = resolve_service_graph(&self.spec).ok();
         let handle = ComposeHandle {
             stack_id,
             project_name: self.project_name.clone(),
             services,
+            graph,
         };
-        let _ = COMPOSE_ENGINES
-            .lock()
-            .unwrap()
-            .insert(stack_id, Arc::new(ComposeEngine::new(
+        let _ = COMPOSE_ENGINES.lock().unwrap().insert(
+            stack_id,
+            Arc::new(ComposeEngine::new(
                 self.spec.clone(),
                 self.project_name.clone(),
                 Arc::clone(&self.backend),
-            )));
+            )),
+        );
         handle
     }
 
@@ -216,17 +219,12 @@ impl ComposeEngine {
                 }
                 Err(_) => {
                     // Does not exist
-                    let mut labels = svc.labels.as_ref().map(|l| l.to_map()).unwrap_or_default();
-                    labels.insert("com.docker.compose.project".into(), self.project_name.clone());
-                    labels.insert("com.docker.compose.service".into(), svc_name.clone());
-
                     let spec = ContainerSpec {
                         image: svc.image_ref(svc_name),
                         name: Some(container_name.clone()),
                         ports: Some(svc.port_strings()),
                         volumes: Some(svc.volume_strings()),
                         env: Some(svc.resolved_env()),
-                        labels: Some(labels),
                         cmd: svc.command_list(),
                         rm: Some(false),
                         ..Default::default()
@@ -416,29 +414,30 @@ impl ComposeEngine {
     /// Get logs from services.
     pub async fn logs(
         &self,
-        service: Option<&str>,
+        services: &[String],
         tail: Option<u32>,
-    ) -> Result<ContainerLogs> {
-        let mut stdout = String::new();
-        let mut stderr = String::new();
+    ) -> Result<HashMap<String, ContainerLogs>> {
+        let mut results = HashMap::new();
 
-        let service_names: Vec<String> = if let Some(s) = service {
-            vec![s.to_string()]
-        } else {
+        let service_names: Vec<String> = if services.is_empty() {
             self.spec.services.keys().cloned().collect()
+        } else {
+            services.to_vec()
         };
 
         for svc_name in service_names {
             if let Some(info) = self.find_container_for_service(&svc_name).await? {
                 let logs = self.backend.logs(&info.id, tail).await?;
-                stdout.push_str(&format!("--- {} ---\n{}", svc_name, logs.stdout));
-                stderr.push_str(&format!("--- {} ---\n{}", svc_name, logs.stderr));
+                results.insert(svc_name, logs);
             } else {
-                stdout.push_str(&format!("--- {} ---\n(not found)\n", svc_name));
+                results.insert(svc_name, ContainerLogs {
+                    stdout: "(not found)\n".into(),
+                    stderr: "".into(),
+                });
             }
         }
 
-        Ok(ContainerLogs { stdout, stderr })
+        Ok(results)
     }
 
     // ============ exec ============
@@ -516,6 +515,56 @@ impl ComposeEngine {
         self.stop(services).await?;
         self.start(services).await
     }
+
+    /// Return full stack status.
+    pub async fn status(&self) -> Result<StackStatus> {
+        let mut services = Vec::new();
+        let mut healthy = true;
+
+        for (svc_name, _svc) in &self.spec.services {
+            let container_info = self.find_container_for_service(svc_name).await?;
+            let status = match container_info {
+                Some(info) => {
+                    let state = if info.status.contains("running") || info.status.contains("Up") {
+                        ServiceState::Running
+                    } else if info.status.contains("Exited") || info.status.contains("stopped") {
+                        ServiceState::Stopped
+                    } else {
+                        healthy = false;
+                        ServiceState::Unknown
+                    };
+                    ServiceStatus {
+                        service: svc_name.clone(),
+                        state,
+                        container_id: Some(info.id),
+                        error: None,
+                    }
+                }
+                None => {
+                    healthy = false;
+                    ServiceStatus {
+                        service: svc_name.clone(),
+                        state: ServiceState::Pending,
+                        container_id: None,
+                        error: None,
+                    }
+                }
+            };
+            services.push(status);
+        }
+
+        Ok(StackStatus { services, healthy })
+    }
+
+    /// Return the resolved service graph.
+    pub fn graph(&self) -> Result<ServiceGraph> {
+        resolve_service_graph(&self.spec)
+    }
+
+    /// Resolve the startup order of services using Kahn's algorithm (BFS topological sort).
+    pub fn resolve_startup_order(&self) -> Result<Vec<String>> {
+        resolve_startup_order(&self.spec)
+    }
 }
 
 // ============ Dependency resolution (Kahn's algorithm) ============
@@ -584,10 +633,31 @@ pub fn resolve_startup_order(spec: &ComposeSpec) -> Result<Vec<String>> {
     Ok(order)
 }
 
+/// Resolve the dependency graph as a serializable ServiceGraph.
+pub fn resolve_service_graph(spec: &ComposeSpec) -> Result<ServiceGraph> {
+    let nodes = resolve_startup_order(spec)?;
+    let mut edges = Vec::new();
+
+    for (name, service) in &spec.services {
+        if let Some(deps) = &service.depends_on {
+            for dep in deps.service_names() {
+                edges.push(ServiceEdge {
+                    from: name.clone(),
+                    to: dep,
+                });
+            }
+        }
+    }
+
+    Ok(ServiceGraph { nodes, edges })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::types::ComposeService;
+    use crate::types::*;
+    use crate::error::*;
 
     fn make_compose(edges: &[(&str, &[&str])]) -> ComposeSpec {
         let mut services = IndexMap::new();
@@ -678,5 +748,28 @@ mod tests {
         let compose = make_compose(&[("c", &[]), ("a", &[]), ("b", &[])]);
         let order = resolve_startup_order(&compose).unwrap();
         assert_eq!(order, vec!["a", "b", "c"]);
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Feature: alloy-container, Property 9: Container name generation uniqueness
+    proptest! {
+        #[test]
+        fn test_container_name_uniqueness(s1 in ".*", s2 in ".*") {
+            let mut svc1 = crate::types::ComposeService::default();
+            svc1.image = Some("img1".into());
+            let mut svc2 = crate::types::ComposeService::default();
+            svc2.image = Some("img2".into());
+
+            let n1 = crate::service::service_container_name(&svc1, &s1);
+            let n2 = crate::service::service_container_name(&svc2, &s2);
+            if s1 != s2 {
+                assert_ne!(n1, n2);
+            }
+        }
     }
 }

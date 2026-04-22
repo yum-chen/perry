@@ -1,98 +1,11 @@
 //! Type definitions for the perry/container module.
 
-use perry_runtime::StringHeader;
-use serde::{Deserialize, Serialize};
-
-use crate::common::handle::{self, Handle};
-
-// Re-export core types from the compose crate to avoid duplication and mismatch.
+pub use perry_runtime::StringHeader;
+pub use serde::{Deserialize, Serialize};
 pub use perry_container_compose::types::{
     ComposeHandle, ComposeSpec, ContainerHandle, ContainerInfo, ContainerLogs, ContainerSpec,
-    ImageInfo, ListOrDict,
+    ImageInfo, ListOrDict, IsolationLevel, BackendInfo,
 };
-
-// ============ Handle Registry ============
-
-pub fn register_container_handle(h: ContainerHandle) -> u64 {
-    handle::register_handle(h) as u64
-}
-
-pub fn get_container_handle(id: u64) -> Option<Handle> {
-    let h = id as Handle;
-    if handle::handle_exists(h) {
-        Some(h)
-    } else {
-        None
-    }
-}
-
-pub fn register_container_info(info: ContainerInfo) -> u64 {
-    handle::register_handle(info) as u64
-}
-
-pub fn register_container_info_list(list: Vec<ContainerInfo>) -> u64 {
-    handle::register_handle(list) as u64
-}
-
-pub fn with_container_info_list<R>(id: u64, f: impl FnOnce(&Vec<ContainerInfo>) -> R) -> Option<R> {
-    handle::with_handle(id as Handle, f)
-}
-
-pub fn take_container_info_list(id: u64) -> Option<Vec<ContainerInfo>> {
-    handle::take_handle(id as Handle)
-}
-
-pub fn register_compose_handle(h: ComposeHandle) -> u64 {
-    handle::register_handle(h) as u64
-}
-
-pub fn get_compose_handle(id: u64) -> Option<&'static ComposeHandle> {
-    handle::get_handle(id as Handle)
-}
-
-pub fn take_compose_handle(id: u64) -> Option<ComposeHandle> {
-    handle::take_handle(id as Handle)
-}
-
-pub fn register_compose_wrapper(w: crate::container::compose::ComposeWrapper) -> u64 {
-    handle::register_handle(w) as u64
-}
-
-pub fn get_compose_wrapper(id: u64) -> Option<&'static crate::container::compose::ComposeWrapper> {
-    handle::get_handle(id as Handle)
-}
-
-pub fn take_compose_wrapper(id: u64) -> Option<crate::container::compose::ComposeWrapper> {
-    handle::take_handle(id as Handle)
-}
-
-pub fn register_container_logs(logs: ContainerLogs) -> u64 {
-    handle::register_handle(logs) as u64
-}
-
-pub fn with_container_logs<R>(id: u64, f: impl FnOnce(&ContainerLogs) -> R) -> Option<R> {
-    handle::with_handle(id as Handle, f)
-}
-
-pub fn take_container_logs(id: u64) -> Option<ContainerLogs> {
-    handle::take_handle(id as Handle)
-}
-
-pub fn register_image_info_list(list: Vec<ImageInfo>) -> u64 {
-    handle::register_handle(list) as u64
-}
-
-pub fn with_image_info_list<R>(id: u64, f: impl FnOnce(&Vec<ImageInfo>) -> R) -> Option<R> {
-    handle::with_handle(id as Handle, f)
-}
-
-pub fn take_image_info_list(id: u64) -> Option<Vec<ImageInfo>> {
-    handle::take_handle(id as Handle)
-}
-
-pub fn drop_container_handle(id: u64) -> bool {
-    handle::drop_handle(id as Handle)
-}
 
 // ============ Error Types ============
 
@@ -117,7 +30,7 @@ pub enum ContainerError {
     },
     InvalidConfig(String),
     NoBackendFound {
-        probed: Vec<crate::container::backend::BackendProbeResult>,
+        probed: Vec<perry_container_compose::error::BackendProbeResult>,
     },
     BackendNotAvailable {
         name: String,
@@ -202,10 +115,10 @@ impl From<perry_container_compose::error::ComposeError> for ContainerError {
     }
 }
 
-// ============ JSON Parsing ============
+// ============ JSON Helpers ============
 
 /// Helper to extract string from StringHeader pointer
-unsafe fn string_from_header(ptr: *const StringHeader) -> Option<String> {
+pub unsafe fn string_from_header(ptr: *const StringHeader) -> Option<String> {
     if ptr.is_null() || (ptr as usize) < 0x1000 {
         return None;
     }
@@ -213,12 +126,6 @@ unsafe fn string_from_header(ptr: *const StringHeader) -> Option<String> {
     let data_ptr = (ptr as *const u8).add(std::mem::size_of::<StringHeader>());
     let bytes = std::slice::from_raw_parts(data_ptr, len);
     Some(String::from_utf8_lossy(bytes).to_string())
-}
-
-/// Parse `ContainerSpec` from a JSON StringHeader pointer.
-pub fn parse_container_spec(spec_ptr: *const StringHeader) -> Result<ContainerSpec, String> {
-    let json = unsafe { string_from_header(spec_ptr) }.ok_or("Invalid spec pointer")?;
-    serde_json::from_str(&json).map_err(|e| e.to_string())
 }
 
 /// Convert a `ContainerError` to a JSON error string for TS.
@@ -238,6 +145,12 @@ pub fn compose_error_to_json(e: ContainerError) -> String {
         "code": code
     })
     .to_string()
+}
+
+/// Parse `ContainerSpec` from a JSON StringHeader pointer.
+pub fn parse_container_spec(spec_ptr: *const StringHeader) -> Result<ContainerSpec, String> {
+    let json = unsafe { string_from_header(spec_ptr) }.ok_or("Invalid spec pointer")?;
+    serde_json::from_str(&json).map_err(|e| e.to_string())
 }
 
 /// Parse `ComposeSpec` from a JSON StringHeader pointer.

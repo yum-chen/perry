@@ -23,7 +23,7 @@ pub use error::{ComposeError, Result};
 pub use types::{ComposeSpec, ComposeService, ComposeHandle};
 pub use compose::ComposeEngine;
 pub use project::ComposeProject;
-pub use backend::{ContainerBackend, OciBackend, BackendDriver, OciCommandBuilder, BackendProbeResult, detect_backend};
+pub use backend::{ContainerBackend, CliBackend, BackendDriver, OciCommandBuilder, BackendProbeResult, detect_backend};
 
 // External crate re-exports for integration tests
 pub use indexmap;

@@ -1,57 +1,36 @@
+//! Image verification for Perry.
+
 use std::collections::HashMap;
-use std::sync::{OnceLock, RwLock};
-use super::types::ComposeError;
+use tokio::sync::Mutex;
+use std::sync::OnceLock;
+use crate::container::types::ContainerError;
 
-pub const CHAINGUARD_IDENTITY: &str =
-    "https://github.com/chainguard-images/images/.github/workflows/sign.yaml@refs/heads/main";
-pub const CHAINGUARD_ISSUER: &str =
-    "https://token.actions.githubusercontent.com";
+static VERIFICATION_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 
-#[derive(Debug, Clone)]
-enum VerificationResult {
-    Verified(String), // digest
-    Failed(String),   // reason
+pub async fn verify_image(reference: &str) -> Result<String, String> {
+    let cache = VERIFICATION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().await;
+
+    if let Some(digest) = cache.get(reference) {
+        return Ok(digest.clone());
+    }
+
+    // Stub: real implementation would use cosign
+    let digest = format!("sha256:{}", reference.len());
+    cache.insert(reference.to_string(), digest.clone());
+    Ok(digest)
 }
 
-static VERIFICATION_CACHE: OnceLock<RwLock<HashMap<String, VerificationResult>>> = OnceLock::new();
+pub fn get_default_base_image() -> &'static str {
+    "cgr.dev/chainguard/alpine-base"
+}
 
-pub async fn verify_image(reference: &str) -> Result<String, ComposeError> {
-    // 1. Resolve digest (simulation for now)
-    let digest = if reference.contains('@') {
-        reference.split('@').last().unwrap().to_string()
-    } else {
-        format!("sha256:{:064x}", 0)
-    };
+pub fn get_chainguard_image(tool: &str) -> String {
+    format!("cgr.dev/chainguard/{}", tool)
+}
 
-    // 2. Check cache
-    let cache = VERIFICATION_CACHE.get_or_init(|| RwLock::new(HashMap::new()));
-    {
-        let read = cache.read().unwrap();
-        if let Some(res) = read.get(&digest) {
-            return match res {
-                VerificationResult::Verified(d) => Ok(d.clone()),
-                VerificationResult::Failed(r) => Err(ComposeError::VerificationFailed {
-                    image: reference.to_string(),
-                    reason: r.clone(),
-                }),
-            };
-        }
-    }
-
-    // 3. Simulate cosign verify
-    let result = VerificationResult::Verified(digest.clone());
-
-    // 4. Cache result
-    {
-        let mut write = cache.write().unwrap();
-        write.insert(digest.clone(), result.clone());
-    }
-
-    match result {
-        VerificationResult::Verified(d) => Ok(d),
-        VerificationResult::Failed(r) => Err(ComposeError::VerificationFailed {
-            image: reference.to_string(),
-            reason: r,
-        }),
+impl From<String> for ContainerError {
+    fn from(s: String) -> Self {
+        ContainerError::VerificationFailed { image: "unknown".into(), reason: s }
     }
 }

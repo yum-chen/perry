@@ -125,6 +125,7 @@ proptest! {
         bool_val in proptest::bool::ANY,
         str_val in "[a-z0-9_]{1,10}",
     ) {
+        use perry_stdlib::container::types::ListOrDict;
         let mut map = IndexMap::new();
         // Mix different value types across keys
         for (i, key) in keys.iter().enumerate() {
@@ -137,7 +138,7 @@ proptest! {
             map.insert(key.clone(), val);
         }
 
-        let lod = perry_stdlib::container::ListOrDict::Dict(map);
+        let lod = ListOrDict::Dict(map);
         let result = lod.to_map();
 
         // All unique keys should be preserved
@@ -159,13 +160,12 @@ proptest! {
     fn prop_list_or_dict_to_map_list(
         entries in proptest::collection::vec("[A-Z][A-Z0-9_]{1,8}=[a-z0-9_]{0,10}", 1..=8),
     ) {
+        use perry_stdlib::container::types::ListOrDict;
         let list: Vec<String> = entries.clone();
-        let lod = perry_stdlib::container::ListOrDict::List(list);
+        let lod = ListOrDict::List(list);
         let result = lod.to_map();
 
         // All unique keys should be present with non-None values
-        // Note: HashMap uses last-writer-wins, so duplicate keys
-        // retain the value from the last occurrence.
         let unique_keys: std::collections::HashSet<&str> =
             entries.iter().map(|e| e.split_once('=').unwrap().0).collect();
         prop_assert_eq!(result.len(), unique_keys.len());
@@ -189,12 +189,11 @@ proptest! {
     fn prop_list_or_dict_to_map_list_no_equals(
         keys in proptest::collection::vec("[A-Z][A-Z0-9_]{1,8}", 1..=5),
     ) {
+        use perry_stdlib::container::types::ListOrDict;
         let list: Vec<String> = keys.clone();
-        let lod = perry_stdlib::container::ListOrDict::List(list);
+        let lod = ListOrDict::List(list);
         let result = lod.to_map();
 
-        // All unique keys should be present with empty values
-        // (HashMap deduplicates keys, so len may be <= keys.len())
         for key in &keys {
             prop_assert_eq!(
                 result.get(key).map(|s| s.as_str()),
@@ -257,24 +256,25 @@ proptest! {
         variant in 0u8..=5,
         msg in "[a-z A-Z0-9_]{1,40}",
     ) {
+        use perry_stdlib::container::types::ContainerError;
         let error = match variant {
-            0 => perry_stdlib::container::ContainerError::NotFound(msg.clone()),
-            1 => perry_stdlib::container::ContainerError::BackendError {
+            0 => ContainerError::NotFound(msg.clone()),
+            1 => ContainerError::BackendError {
                 code: 1,
                 message: msg.clone(),
             },
-            2 => perry_stdlib::container::ContainerError::VerificationFailed {
+            2 => ContainerError::VerificationFailed {
                 image: msg.clone(),
                 reason: "test reason".to_string(),
             },
-            3 => perry_stdlib::container::ContainerError::DependencyCycle {
+            3 => ContainerError::DependencyCycle {
                 cycle: vec![msg.clone()],
             },
-            4 => perry_stdlib::container::ContainerError::ServiceStartupFailed {
+            4 => ContainerError::ServiceStartupFailed {
                 service: msg.clone(),
                 error: "test error".to_string(),
             },
-            _ => perry_stdlib::container::ContainerError::InvalidConfig(msg.clone()),
+            _ => ContainerError::InvalidConfig(msg.clone()),
         };
 
         let display = format!("{}", error);
@@ -332,7 +332,7 @@ proptest! {
     }
 }
 
-// ============ Property: Handle registry register/take type safety ============
+// ============ Property: Handle registry type safety ============
 // Validates: Registering and retrieving handles preserves the value and type.
 
 proptest! {
@@ -345,7 +345,10 @@ proptest! {
         stdout in "[a-z0-9 ]{0,50}",
         stderr in "[a-z0-9 ]{0,50}",
     ) {
-        use perry_stdlib::container::{ContainerInfo, ContainerLogs};
+        use perry_stdlib::container::context::{ContainerContext, HandleEntry};
+        use perry_stdlib::container::types::{ContainerInfo, ContainerLogs};
+
+        let ctx = ContainerContext::new();
 
         // Register a Vec<ContainerInfo> and take it back
         let infos: Vec<ContainerInfo> = ids
@@ -362,15 +365,18 @@ proptest! {
             })
             .collect();
 
-        let h = perry_stdlib::container::types::register_container_info_list(infos.clone());
-        let taken: Option<Vec<ContainerInfo>> =
-            perry_stdlib::container::types::take_container_info_list(h);
-        prop_assert!(taken.is_some());
-        let taken = taken.unwrap();
-        prop_assert_eq!(taken.len(), infos.len());
-        for (original, recovered) in infos.iter().zip(taken.iter()) {
-            prop_assert_eq!(&recovered.id, &original.id);
-            prop_assert_eq!(&recovered.image, &original.image);
+        let h = ctx.register_handle(HandleEntry::InfoList(infos.clone()));
+        let taken_entry = ctx.handles.remove(&h).map(|(_, e)| e);
+        prop_assert!(taken_entry.is_some());
+
+        if let Some(HandleEntry::InfoList(taken)) = taken_entry {
+            prop_assert_eq!(taken.len(), infos.len());
+            for (original, recovered) in infos.iter().zip(taken.iter()) {
+                prop_assert_eq!(&recovered.id, &original.id);
+                prop_assert_eq!(&recovered.image, &original.image);
+            }
+        } else {
+            prop_assert!(false, "Expected InfoList entry");
         }
 
         // Register ContainerLogs and take it back
@@ -378,13 +384,16 @@ proptest! {
             stdout: stdout.clone(),
             stderr: stderr.clone(),
         };
-        let lh = perry_stdlib::container::types::register_container_logs(logs);
-        let taken_logs: Option<ContainerLogs> =
-            perry_stdlib::container::types::take_container_logs(lh);
-        prop_assert!(taken_logs.is_some());
-        let taken_logs = taken_logs.unwrap();
-        prop_assert_eq!(taken_logs.stdout, stdout);
-        prop_assert_eq!(taken_logs.stderr, stderr);
+        let lh = ctx.register_handle(HandleEntry::Logs(logs.clone()));
+        let taken_logs_entry = ctx.handles.remove(&lh).map(|(_, e)| e);
+        prop_assert!(taken_logs_entry.is_some());
+
+        if let Some(HandleEntry::Logs(taken_logs)) = taken_logs_entry {
+            prop_assert_eq!(taken_logs.stdout, stdout);
+            prop_assert_eq!(taken_logs.stderr, stderr);
+        } else {
+            prop_assert!(false, "Expected Logs entry");
+        }
     }
 }
 

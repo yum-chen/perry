@@ -492,3 +492,32 @@ networks:
         assert!(spec.services.is_empty());
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Feature: alloy-container, Property 6: YAML round-trip (CLI path)
+    proptest! {
+        #[test]
+        fn test_yaml_round_trip(name in ".*") {
+            let mut services = indexmap::IndexMap::new();
+            services.insert("web".into(), crate::types::ComposeService {
+                image: Some("nginx".into()),
+                ..Default::default()
+            });
+            let spec = ComposeSpec {
+                name: Some(name),
+                services,
+                ..Default::default()
+            };
+
+            let yaml = spec.to_yaml().unwrap();
+            let spec2 = ComposeSpec::parse_str(&yaml).unwrap();
+
+            assert_eq!(spec.name, spec2.name);
+            assert_eq!(spec.services.len(), spec2.services.len());
+        }
+    }
+}

@@ -40,6 +40,14 @@ pub struct VolumeConfig {
     pub labels: HashMap<String, String>,
 }
 
+/// Execution strategy for a container backend.
+#[derive(Debug, Clone)]
+pub enum ExecutionStrategy {
+    CliExec { bin: PathBuf },
+    ApiSocket { socket: PathBuf },
+    VmSpawn { config: serde_json::Value },
+}
+
 /// Security profile for sandboxed OCI containers.
 #[derive(Debug, Clone, Default)]
 pub struct SecurityProfile {
@@ -76,7 +84,39 @@ impl From<&ComposeVolume> for VolumeConfig {
 // 4.1  ContainerBackend trait
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Protocol-specific argument builder for container CLI runtimes.
+pub trait CliProtocol: Send + Sync + std::fmt::Debug {
+    fn name(&self) -> &'static str;
+    fn run_args(&self, spec: &ContainerSpec) -> Vec<String>;
+    fn create_args(&self, spec: &ContainerSpec) -> Vec<String>;
+    fn stop_args(&self, id: &str, timeout: Option<u32>) -> Vec<String>;
+    fn remove_args(&self, id: &str, force: bool) -> Vec<String>;
+    fn list_args(&self, all: bool) -> Vec<String>;
+    fn logs_args(&self, id: &str, tail: Option<u32>) -> Vec<String>;
+    fn exec_args(
+        &self,
+        id: &str,
+        cmd: &[String],
+        env: Option<&HashMap<String, String>>,
+        workdir: Option<&str>,
+    ) -> Vec<String>;
+    fn pull_image_args(&self, reference: &str) -> Vec<String>;
+    fn build_args(
+        &self,
+        context: &str,
+        tag: &str,
+        dockerfile: Option<&str>,
+        args: Option<&HashMap<String, String>>,
+    ) -> Vec<String>;
+    fn create_network_args(&self, name: &str, config: &NetworkConfig) -> Vec<String>;
+    fn create_volume_args(&self, name: &str, config: &VolumeConfig) -> Vec<String>;
+    fn start_args(&self, id: &str) -> Vec<String>;
+    fn wait_args(&self, id: &str) -> Vec<String>;
+    fn subcommand_prefix(&self) -> Option<Vec<String>> { None }
+}
+
 /// Runtime-agnostic async interface for container operations.
+/// Follows canonical method set from SPEC.md §2.2.
 #[async_trait]
 pub trait ContainerBackend: Send + Sync {
     fn backend_name(&self) -> &str;
@@ -103,7 +143,6 @@ pub trait ContainerBackend: Send + Sync {
     async fn remove_network(&self, name: &str) -> Result<()>;
     async fn create_volume(&self, name: &str, config: &VolumeConfig) -> Result<()>;
     async fn remove_volume(&self, name: &str) -> Result<()>;
-
     async fn inspect_network(&self, name: &str) -> Result<serde_json::Value>;
     async fn inspect_volume(&self, name: &str) -> Result<serde_json::Value>;
 
@@ -127,6 +166,12 @@ pub trait ContainerBackend: Send + Sync {
 
     /// Wait for a container to exit and collect its logs.
     async fn wait_and_logs(&self, id: &str) -> Result<ContainerLogs>;
+
+    /// Get execution strategy for this backend.
+    fn strategy(&self) -> ExecutionStrategy;
+
+    /// Get isolation level provided by this backend.
+    fn isolation_level(&self) -> crate::types::IsolationLevel;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -301,14 +346,6 @@ pub fn docker_run_flags(spec: &ContainerSpec, include_detach: bool) -> Vec<Strin
             args.push(format!("{}={}", k, v));
         }
     }
-    if let Some(labels) = &spec.labels {
-        let mut pairs: Vec<(&String, &String)> = labels.iter().collect();
-        pairs.sort_by_key(|(k, _)| k.as_str());
-        for (k, v) in pairs {
-            args.push("--label".into());
-            args.push(format!("{}={}", k, v));
-        }
-    }
     if let Some(ep) = &spec.entrypoint {
         args.push("--entrypoint".into());
         args.push(ep.join(" "));
@@ -331,6 +368,86 @@ pub enum BackendDriver {
     Lima { bin: PathBuf, instance: String }, // uses limactl
     Nerdctl { bin: PathBuf },
     Docker { bin: PathBuf },
+}
+
+// ── Protocols ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct DockerProtocol;
+impl CliProtocol for DockerProtocol {
+    fn name(&self) -> &'static str { "docker-compatible" }
+    fn run_args(&self, spec: &ContainerSpec) -> Vec<String> { OciCommandBuilder::docker_run_args(spec, true) }
+    fn create_args(&self, spec: &ContainerSpec) -> Vec<String> { OciCommandBuilder::docker_run_args(spec, false) }
+    fn stop_args(&self, id: &str, timeout: Option<u32>) -> Vec<String> { OciCommandBuilder::stop_args(id, timeout) }
+    fn remove_args(&self, id: &str, force: bool) -> Vec<String> { OciCommandBuilder::remove_args(id, force) }
+    fn list_args(&self, all: bool) -> Vec<String> { OciCommandBuilder::list_args(all) }
+    fn logs_args(&self, id: &str, tail: Option<u32>) -> Vec<String> { OciCommandBuilder::logs_args(id, tail) }
+    fn exec_args(&self, id: &str, cmd: &[String], env: Option<&HashMap<String, String>>, workdir: Option<&str>) -> Vec<String> {
+        OciCommandBuilder::exec_args(id, cmd, env, workdir)
+    }
+    fn pull_image_args(&self, reference: &str) -> Vec<String> { OciCommandBuilder::pull_image_args(reference) }
+    fn build_args(&self, context: &str, tag: &str, dockerfile: Option<&str>, args: Option<&HashMap<String, String>>) -> Vec<String> {
+        OciCommandBuilder::build_args(context, tag, dockerfile, args)
+    }
+    fn create_network_args(&self, name: &str, config: &NetworkConfig) -> Vec<String> { OciCommandBuilder::create_network_args(name, config) }
+    fn create_volume_args(&self, name: &str, config: &VolumeConfig) -> Vec<String> { OciCommandBuilder::create_volume_args(name, config) }
+    fn start_args(&self, id: &str) -> Vec<String> { OciCommandBuilder::start_args(id) }
+    fn wait_args(&self, id: &str) -> Vec<String> { OciCommandBuilder::wait_args(id) }
+}
+
+#[derive(Debug, Clone)]
+pub struct AppleContainerProtocol;
+impl CliProtocol for AppleContainerProtocol {
+    fn name(&self) -> &'static str { "apple/container" }
+    fn run_args(&self, spec: &ContainerSpec) -> Vec<String> { OciCommandBuilder::apple_run_args(spec) }
+    fn create_args(&self, spec: &ContainerSpec) -> Vec<String> {
+        let mut args = vec!["create".into()];
+        args.extend(docker_run_flags(spec, false));
+        args.push(spec.image.clone());
+        if let Some(cmd) = &spec.cmd { args.extend(cmd.iter().cloned()); }
+        args
+    }
+    fn stop_args(&self, id: &str, timeout: Option<u32>) -> Vec<String> { OciCommandBuilder::stop_args(id, timeout) }
+    fn remove_args(&self, id: &str, force: bool) -> Vec<String> { OciCommandBuilder::remove_args(id, force) }
+    fn list_args(&self, all: bool) -> Vec<String> { OciCommandBuilder::list_args(all) }
+    fn logs_args(&self, id: &str, tail: Option<u32>) -> Vec<String> { OciCommandBuilder::logs_args(id, tail) }
+    fn exec_args(&self, id: &str, cmd: &[String], env: Option<&HashMap<String, String>>, workdir: Option<&str>) -> Vec<String> {
+        OciCommandBuilder::exec_args(id, cmd, env, workdir)
+    }
+    fn pull_image_args(&self, reference: &str) -> Vec<String> { OciCommandBuilder::pull_image_args(reference) }
+    fn build_args(&self, context: &str, tag: &str, dockerfile: Option<&str>, args: Option<&HashMap<String, String>>) -> Vec<String> {
+        OciCommandBuilder::build_args(context, tag, dockerfile, args)
+    }
+    fn create_network_args(&self, name: &str, config: &NetworkConfig) -> Vec<String> { OciCommandBuilder::create_network_args(name, config) }
+    fn start_args(&self, id: &str) -> Vec<String> { OciCommandBuilder::start_args(id) }
+    fn create_volume_args(&self, name: &str, config: &VolumeConfig) -> Vec<String> { OciCommandBuilder::create_volume_args(name, config) }
+    fn wait_args(&self, id: &str) -> Vec<String> { OciCommandBuilder::wait_args(id) }
+}
+
+#[derive(Debug, Clone)]
+pub struct LimaProtocol { pub instance: String }
+impl CliProtocol for LimaProtocol {
+    fn name(&self) -> &'static str { "lima" }
+    fn run_args(&self, spec: &ContainerSpec) -> Vec<String> { OciCommandBuilder::docker_run_args(spec, true) }
+    fn create_args(&self, spec: &ContainerSpec) -> Vec<String> { OciCommandBuilder::docker_run_args(spec, false) }
+    fn stop_args(&self, id: &str, timeout: Option<u32>) -> Vec<String> { OciCommandBuilder::stop_args(id, timeout) }
+    fn remove_args(&self, id: &str, force: bool) -> Vec<String> { OciCommandBuilder::remove_args(id, force) }
+    fn list_args(&self, all: bool) -> Vec<String> { OciCommandBuilder::list_args(all) }
+    fn logs_args(&self, id: &str, tail: Option<u32>) -> Vec<String> { OciCommandBuilder::logs_args(id, tail) }
+    fn exec_args(&self, id: &str, cmd: &[String], env: Option<&HashMap<String, String>>, workdir: Option<&str>) -> Vec<String> {
+        OciCommandBuilder::exec_args(id, cmd, env, workdir)
+    }
+    fn pull_image_args(&self, reference: &str) -> Vec<String> { OciCommandBuilder::pull_image_args(reference) }
+    fn build_args(&self, context: &str, tag: &str, dockerfile: Option<&str>, args: Option<&HashMap<String, String>>) -> Vec<String> {
+        OciCommandBuilder::build_args(context, tag, dockerfile, args)
+    }
+    fn create_network_args(&self, name: &str, config: &NetworkConfig) -> Vec<String> { OciCommandBuilder::create_network_args(name, config) }
+    fn start_args(&self, id: &str) -> Vec<String> { OciCommandBuilder::start_args(id) }
+    fn create_volume_args(&self, name: &str, config: &VolumeConfig) -> Vec<String> { OciCommandBuilder::create_volume_args(name, config) }
+    fn wait_args(&self, id: &str) -> Vec<String> { OciCommandBuilder::wait_args(id) }
+    fn subcommand_prefix(&self) -> Option<Vec<String>> {
+        Some(vec!["shell".into(), self.instance.clone(), "nerdctl".into()])
+    }
 }
 
 impl BackendDriver {
@@ -440,11 +557,11 @@ impl OciCommandBuilder {
         args
     }
 
-    pub fn start_args(_driver: &BackendDriver, id: &str) -> Vec<String> {
+    pub fn start_args(id: &str) -> Vec<String> {
         vec!["start".into(), id.into()]
     }
 
-    pub fn stop_args(_driver: &BackendDriver, id: &str, timeout: Option<u32>) -> Vec<String> {
+    pub fn stop_args(id: &str, timeout: Option<u32>) -> Vec<String> {
         let mut args = vec!["stop".into()];
         if let Some(t) = timeout {
             args.push("-t".into());
@@ -454,7 +571,7 @@ impl OciCommandBuilder {
         args
     }
 
-    pub fn remove_args(_driver: &BackendDriver, id: &str, force: bool) -> Vec<String> {
+    pub fn remove_args(id: &str, force: bool) -> Vec<String> {
         let mut args = vec!["rm".into()];
         if force {
             args.push("-f".into());
@@ -463,7 +580,7 @@ impl OciCommandBuilder {
         args
     }
 
-    pub fn list_args(_driver: &BackendDriver, all: bool) -> Vec<String> {
+    pub fn list_args(all: bool) -> Vec<String> {
         let mut args = vec!["ps".into(), "--format".into(), "json".into()];
         if all {
             args.push("--all".into());
@@ -471,11 +588,11 @@ impl OciCommandBuilder {
         args
     }
 
-    pub fn inspect_args(_driver: &BackendDriver, id: &str) -> Vec<String> {
+    pub fn inspect_args(id: &str) -> Vec<String> {
         vec!["inspect".into(), "--format".into(), "json".into(), id.into()]
     }
 
-    pub fn logs_args(_driver: &BackendDriver, id: &str, tail: Option<u32>) -> Vec<String> {
+    pub fn logs_args(id: &str, tail: Option<u32>) -> Vec<String> {
         let mut args = vec!["logs".into()];
         if let Some(t) = tail {
             args.push("--tail".into());
@@ -486,7 +603,6 @@ impl OciCommandBuilder {
     }
 
     pub fn exec_args(
-        _driver: &BackendDriver,
         id: &str,
         cmd: &[String],
         env: Option<&HashMap<String, String>>,
@@ -510,15 +626,15 @@ impl OciCommandBuilder {
         args
     }
 
-    pub fn pull_image_args(_driver: &BackendDriver, reference: &str) -> Vec<String> {
+    pub fn pull_image_args(reference: &str) -> Vec<String> {
         vec!["pull".into(), reference.into()]
     }
 
-    pub fn list_images_args(_driver: &BackendDriver) -> Vec<String> {
+    pub fn list_images_args() -> Vec<String> {
         vec!["images".into(), "--format".into(), "json".into()]
     }
 
-    pub fn remove_image_args(_driver: &BackendDriver, reference: &str, force: bool) -> Vec<String> {
+    pub fn remove_image_args(reference: &str, force: bool) -> Vec<String> {
         let mut args = vec!["rmi".into()];
         if force {
             args.push("-f".into());
@@ -527,7 +643,7 @@ impl OciCommandBuilder {
         args
     }
 
-    pub fn create_network_args(_driver: &BackendDriver, name: &str, config: &NetworkConfig) -> Vec<String> {
+    pub fn create_network_args(name: &str, config: &NetworkConfig) -> Vec<String> {
         let mut args = vec!["network".into(), "create".into()];
         if let Some(d) = &config.driver {
             args.push("--driver".into());
@@ -549,11 +665,11 @@ impl OciCommandBuilder {
         args
     }
 
-    pub fn remove_network_args(_driver: &BackendDriver, name: &str) -> Vec<String> {
+    pub fn remove_network_args(name: &str) -> Vec<String> {
         vec!["network".into(), "rm".into(), name.into()]
     }
 
-    pub fn create_volume_args(_driver: &BackendDriver, name: &str, config: &VolumeConfig) -> Vec<String> {
+    pub fn create_volume_args(name: &str, config: &VolumeConfig) -> Vec<String> {
         let mut args = vec!["volume".into(), "create".into()];
         if let Some(d) = &config.driver {
             args.push("--driver".into());
@@ -569,20 +685,19 @@ impl OciCommandBuilder {
         args
     }
 
-    pub fn remove_volume_args(_driver: &BackendDriver, name: &str) -> Vec<String> {
+    pub fn remove_volume_args(name: &str) -> Vec<String> {
         vec!["volume".into(), "rm".into(), name.into()]
     }
 
-    pub fn inspect_network_args(_driver: &BackendDriver, name: &str) -> Vec<String> {
+    pub fn inspect_network_args(name: &str) -> Vec<String> {
         vec!["network".into(), "inspect".into(), name.into()]
     }
 
-    pub fn inspect_volume_args(_driver: &BackendDriver, name: &str) -> Vec<String> {
+    pub fn inspect_volume_args(name: &str) -> Vec<String> {
         vec!["volume".into(), "inspect".into(), name.into()]
     }
 
     pub fn build_args(
-        _driver: &BackendDriver,
         context: &str,
         tag: &str,
         dockerfile: Option<&str>,
@@ -603,11 +718,11 @@ impl OciCommandBuilder {
         full_args
     }
 
-    pub fn inspect_image_args(_driver: &BackendDriver, reference: &str) -> Vec<String> {
+    pub fn inspect_image_args(reference: &str) -> Vec<String> {
         vec!["image".into(), "inspect".into(), reference.into()]
     }
 
-    pub fn manifest_inspect_args(_driver: &BackendDriver, reference: &str) -> Vec<String> {
+    pub fn manifest_inspect_args(reference: &str) -> Vec<String> {
         vec!["manifest".into(), "inspect".into(), reference.into()]
     }
 
@@ -616,7 +731,10 @@ impl OciCommandBuilder {
         spec: &ContainerSpec,
         profile: &SecurityProfile,
     ) -> Vec<String> {
-        let mut args = Self::run_args(driver, spec);
+        let mut args = match driver {
+            BackendDriver::AppleContainer { .. } => Self::apple_run_args(spec),
+            _ => Self::docker_run_args(spec, true),
+        };
         let image_pos = args.iter().position(|s| s == &spec.image).unwrap_or(args.len());
 
         let mut security_flags = Vec::new();
@@ -638,7 +756,7 @@ impl OciCommandBuilder {
         args
     }
 
-    pub fn wait_args(_driver: &BackendDriver, id: &str) -> Vec<String> {
+    pub fn wait_args(id: &str) -> Vec<String> {
         vec!["wait".into(), id.into()]
     }
 
@@ -720,24 +838,26 @@ impl OciCommandBuilder {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 4.6  OciBackend struct
+// 4.6  CliBackend struct
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Concrete `ContainerBackend` that executes CLI commands via
 /// `tokio::process::Command`.
-pub struct OciBackend {
-    pub driver: BackendDriver,
+pub struct CliBackend<P: CliProtocol> {
+    pub bin: PathBuf,
+    pub protocol: P,
+    pub driver_name: String,
 }
 
-impl OciBackend {
-    pub fn new(driver: BackendDriver) -> Self {
-        OciBackend { driver }
+impl<P: CliProtocol> CliBackend<P> {
+    pub fn new(bin: PathBuf, protocol: P, driver_name: String) -> Self {
+        CliBackend { bin, protocol, driver_name }
     }
 
     /// Build the full argument list, prepending the protocol's subcommand
     /// prefix (e.g. `["shell", "default", "nerdctl"]` for Lima) when present.
     pub fn full_args(&self, subcommand_args: Vec<String>) -> Vec<String> {
-        match self.driver.subcommand_prefix() {
+        match self.protocol.subcommand_prefix() {
             Some(prefix) => {
                 let mut full = prefix;
                 full.extend(subcommand_args);
@@ -750,7 +870,7 @@ impl OciBackend {
     /// Execute the binary with the given arguments and return the raw output.
     async fn exec_raw(&self, args: Vec<String>) -> Result<std::process::Output> {
         let full = self.full_args(args);
-        let output = Command::new(self.driver.bin())
+        let output = Command::new(&self.bin)
             .args(&full)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -776,13 +896,14 @@ impl OciBackend {
 }
 
 #[async_trait]
-impl ContainerBackend for OciBackend {
-    fn backend_name(&self) -> &'static str {
-        self.driver.name()
+#[async_trait]
+impl<P: CliProtocol> ContainerBackend for CliBackend<P> {
+    fn backend_name(&self) -> &str {
+        &self.driver_name
     }
 
     async fn check_available(&self) -> Result<()> {
-        let output = Command::new(self.driver.bin())
+        let output = Command::new(&self.bin)
             .arg("--version")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -804,7 +925,7 @@ impl ContainerBackend for OciBackend {
     }
 
     async fn run(&self, spec: &ContainerSpec) -> Result<ContainerHandle> {
-        let args = OciCommandBuilder::run_args(&self.driver, spec);
+        let args = self.protocol.run_args(spec);
         let stdout = self.exec_ok(args).await?;
         let id = OciCommandBuilder::parse_container_id(&stdout);
         let name = spec.name.clone().or_else(|| Some(id.clone()));
@@ -812,7 +933,7 @@ impl ContainerBackend for OciBackend {
     }
 
     async fn create(&self, spec: &ContainerSpec) -> Result<ContainerHandle> {
-        let args = OciCommandBuilder::create_args(&self.driver, spec);
+        let args = self.protocol.create_args(spec);
         let stdout = self.exec_ok(args).await?;
         let id = OciCommandBuilder::parse_container_id(&stdout);
         let name = spec.name.clone().or_else(|| Some(id.clone()));
@@ -820,27 +941,27 @@ impl ContainerBackend for OciBackend {
     }
 
     async fn start(&self, id: &str) -> Result<()> {
-        self.exec_ok(OciCommandBuilder::start_args(&self.driver, id)).await?;
+        self.exec_ok(self.protocol.start_args(id)).await?;
         Ok(())
     }
 
     async fn stop(&self, id: &str, timeout: Option<u32>) -> Result<()> {
-        self.exec_ok(OciCommandBuilder::stop_args(&self.driver, id, timeout)).await?;
+        self.exec_ok(self.protocol.stop_args(id, timeout)).await?;
         Ok(())
     }
 
     async fn remove(&self, id: &str, force: bool) -> Result<()> {
-        self.exec_ok(OciCommandBuilder::remove_args(&self.driver, id, force)).await?;
+        self.exec_ok(self.protocol.remove_args(id, force)).await?;
         Ok(())
     }
 
     async fn list(&self, all: bool) -> Result<Vec<ContainerInfo>> {
-        let stdout = self.exec_ok(OciCommandBuilder::list_args(&self.driver, all)).await?;
+        let stdout = self.exec_ok(self.protocol.list_args(all)).await?;
         Ok(OciCommandBuilder::parse_list_output(&stdout))
     }
 
     async fn inspect(&self, id: &str) -> Result<ContainerInfo> {
-        let output = self.exec_raw(OciCommandBuilder::inspect_args(&self.driver, id)).await?;
+        let output = self.exec_raw(OciCommandBuilder::inspect_args(id)).await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             if is_not_found(&stderr) {
@@ -857,7 +978,7 @@ impl ContainerBackend for OciBackend {
     }
 
     async fn logs(&self, id: &str, tail: Option<u32>) -> Result<ContainerLogs> {
-        let output = self.exec_raw(OciCommandBuilder::logs_args(&self.driver, id, tail)).await?;
+        let output = self.exec_raw(self.protocol.logs_args(id, tail)).await?;
         Ok(ContainerLogs {
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
@@ -872,7 +993,7 @@ impl ContainerBackend for OciBackend {
         workdir: Option<&str>,
     ) -> Result<ContainerLogs> {
         let output = self
-            .exec_raw(OciCommandBuilder::exec_args(&self.driver, id, cmd, env, workdir))
+            .exec_raw(self.protocol.exec_args(id, cmd, env, workdir))
             .await?;
         Ok(ContainerLogs {
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -881,30 +1002,30 @@ impl ContainerBackend for OciBackend {
     }
 
     async fn pull_image(&self, reference: &str) -> Result<()> {
-        self.exec_ok(OciCommandBuilder::pull_image_args(&self.driver, reference)).await?;
+        self.exec_ok(self.protocol.pull_image_args(reference)).await?;
         Ok(())
     }
 
     async fn list_images(&self) -> Result<Vec<ImageInfo>> {
-        let stdout = self.exec_ok(OciCommandBuilder::list_images_args(&self.driver)).await?;
+        let stdout = self.exec_ok(OciCommandBuilder::list_images_args()).await?;
         Ok(OciCommandBuilder::parse_list_images_output(&stdout))
     }
 
     async fn remove_image(&self, reference: &str, force: bool) -> Result<()> {
-        self.exec_ok(OciCommandBuilder::remove_image_args(&self.driver, reference, force))
+        self.exec_ok(OciCommandBuilder::remove_image_args(reference, force))
             .await?;
         Ok(())
     }
 
     async fn create_network(&self, name: &str, config: &NetworkConfig) -> Result<()> {
-        self.exec_ok(OciCommandBuilder::create_network_args(&self.driver, name, config))
+        self.exec_ok(self.protocol.create_network_args(name, config))
             .await?;
         Ok(())
     }
 
     async fn remove_network(&self, name: &str) -> Result<()> {
         let output = self
-            .exec_raw(OciCommandBuilder::remove_network_args(&self.driver, name))
+            .exec_raw(OciCommandBuilder::remove_network_args(name))
             .await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -920,73 +1041,14 @@ impl ContainerBackend for OciBackend {
     }
 
     async fn create_volume(&self, name: &str, config: &VolumeConfig) -> Result<()> {
-        self.exec_ok(OciCommandBuilder::create_volume_args(&self.driver, name, config))
+        self.exec_ok(self.protocol.create_volume_args(name, config))
             .await?;
         Ok(())
-    }
-
-    async fn run_with_security(
-        &self,
-        spec: &ContainerSpec,
-        profile: &SecurityProfile,
-    ) -> Result<ContainerHandle> {
-        let args = OciCommandBuilder::run_with_security_args(&self.driver, spec, profile);
-        let stdout = self.exec_ok(args).await?;
-        let id = OciCommandBuilder::parse_container_id(&stdout);
-        let name = spec.name.clone().or_else(|| Some(id.clone()));
-        Ok(ContainerHandle { id, name })
-    }
-
-    async fn wait_and_logs(&self, id: &str) -> Result<ContainerLogs> {
-        // Wait for exit
-        let _ = self.exec_ok(OciCommandBuilder::wait_args(&self.driver, id)).await?;
-        // Collect logs
-        self.logs(id, None).await
-    }
-
-    async fn build_image(
-        &self,
-        context: &str,
-        tag: &str,
-        dockerfile: Option<&str>,
-        args: Option<&HashMap<String, String>>,
-    ) -> Result<()> {
-        self.exec_ok(OciCommandBuilder::build_args(&self.driver, context, tag, dockerfile, args))
-            .await?;
-        Ok(())
-    }
-
-    async fn inspect_image(&self, reference: &str) -> Result<serde_json::Value> {
-        let stdout = self
-            .exec_ok(OciCommandBuilder::inspect_image_args(&self.driver, reference))
-            .await?;
-        serde_json::from_str(&stdout).map_err(ComposeError::JsonError)
-    }
-
-    async fn manifest_inspect(&self, reference: &str) -> Result<serde_json::Value> {
-        let stdout = self
-            .exec_ok(OciCommandBuilder::manifest_inspect_args(&self.driver, reference))
-            .await?;
-        serde_json::from_str(&stdout).map_err(ComposeError::JsonError)
-    }
-
-    async fn inspect_network(&self, name: &str) -> Result<serde_json::Value> {
-        let stdout = self
-            .exec_ok(OciCommandBuilder::inspect_network_args(&self.driver, name))
-            .await?;
-        serde_json::from_str(&stdout).map_err(ComposeError::JsonError)
-    }
-
-    async fn inspect_volume(&self, name: &str) -> Result<serde_json::Value> {
-        let stdout = self
-            .exec_ok(OciCommandBuilder::inspect_volume_args(&self.driver, name))
-            .await?;
-        serde_json::from_str(&stdout).map_err(ComposeError::JsonError)
     }
 
     async fn remove_volume(&self, name: &str) -> Result<()> {
         let output = self
-            .exec_raw(OciCommandBuilder::remove_volume_args(&self.driver, name))
+            .exec_raw(OciCommandBuilder::remove_volume_args(name))
             .await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1000,11 +1062,99 @@ impl ContainerBackend for OciBackend {
         }
         Ok(())
     }
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 4.7  detect_backend() and probe_candidate()
-// ─────────────────────────────────────────────────────────────────────────────
+    async fn build_image(
+        &self,
+        context: &str,
+        tag: &str,
+        dockerfile: Option<&str>,
+        args: Option<&HashMap<String, String>>,
+    ) -> Result<()> {
+        self.exec_ok(self.protocol.build_args(context, tag, dockerfile, args))
+            .await?;
+        Ok(())
+    }
+
+    async fn inspect_image(&self, reference: &str) -> Result<serde_json::Value> {
+        let stdout = self
+            .exec_ok(OciCommandBuilder::inspect_image_args(reference))
+            .await?;
+        serde_json::from_str(&stdout).map_err(ComposeError::JsonError)
+    }
+
+    async fn manifest_inspect(&self, reference: &str) -> Result<serde_json::Value> {
+        let stdout = self
+            .exec_ok(OciCommandBuilder::manifest_inspect_args(reference))
+            .await?;
+        serde_json::from_str(&stdout).map_err(ComposeError::JsonError)
+    }
+
+    async fn inspect_network(&self, name: &str) -> Result<serde_json::Value> {
+        let stdout = self
+            .exec_ok(OciCommandBuilder::inspect_network_args(name))
+            .await?;
+        serde_json::from_str(&stdout).map_err(ComposeError::JsonError)
+    }
+
+    async fn inspect_volume(&self, name: &str) -> Result<serde_json::Value> {
+        let stdout = self
+            .exec_ok(OciCommandBuilder::inspect_volume_args(name))
+            .await?;
+        serde_json::from_str(&stdout).map_err(ComposeError::JsonError)
+    }
+
+    async fn run_with_security(
+        &self,
+        spec: &ContainerSpec,
+        profile: &SecurityProfile,
+    ) -> Result<ContainerHandle> {
+        let mut args = match self.driver_name.as_str() {
+            "apple/container" => OciCommandBuilder::apple_run_args(spec),
+            _ => OciCommandBuilder::docker_run_args(spec, true),
+        };
+        let image_pos = args.iter().position(|s| s == &spec.image).unwrap_or(args.len());
+
+        let mut security_flags = Vec::new();
+        if profile.read_only_rootfs {
+            security_flags.push("--read-only".into());
+        }
+        if let Some(p) = &profile.seccomp_profile {
+            security_flags.push("--security-opt".into());
+            security_flags.push(format!("seccomp={}", p));
+        }
+        for cap in &profile.cap_drop {
+            security_flags.push("--cap-drop".into());
+            security_flags.push(cap.clone());
+        }
+
+        for (i, flag) in security_flags.into_iter().enumerate() {
+            args.insert(image_pos + i, flag);
+        }
+
+        let stdout = self.exec_ok(args).await?;
+        let id = OciCommandBuilder::parse_container_id(&stdout);
+        let name = spec.name.clone().or_else(|| Some(id.clone()));
+        Ok(ContainerHandle { id, name })
+    }
+
+    async fn wait_and_logs(&self, id: &str) -> Result<ContainerLogs> {
+        let _ = self.exec_ok(self.protocol.wait_args(id)).await?;
+        self.logs(id, None).await
+    }
+
+    fn strategy(&self) -> ExecutionStrategy {
+        ExecutionStrategy::CliExec {
+            bin: self.bin.clone(),
+        }
+    }
+
+    fn isolation_level(&self) -> crate::types::IsolationLevel {
+        match self.driver_name.as_str() {
+            "apple/container" => crate::types::IsolationLevel::Container,
+            _ => crate::types::IsolationLevel::Container,
+        }
+    }
+}
 
 const PROBE_TIMEOUT_SECS: u64 = 2;
 
@@ -1066,7 +1216,7 @@ pub async fn probe_candidate(
             probe_run(bin.to_str().unwrap_or("container"), &["--version"])
                 .await
                 .map_err(|e| format!("apple/container --version failed: {}", e))?;
-            Ok(Box::new(OciBackend::new(BackendDriver::AppleContainer { bin })))
+            Ok(Box::new(CliBackend::new(bin, AppleContainerProtocol, "apple/container".into())))
         }
 
         // ── orbstack ─────────────────────────────────────────────────────
@@ -1089,7 +1239,7 @@ pub async fn probe_candidate(
                 let bin = which::which("docker")
                     .or_else(|_| which::which("orb"))
                     .map_err(|_| "orbstack: neither docker nor orb found".to_string())?;
-                Ok(Box::new(OciBackend::new(BackendDriver::OrbStack { bin })))
+                Ok(Box::new(CliBackend::new(bin, DockerProtocol, "orbstack".into())))
             } else {
                 Err("orbstack: neither `orb --version` succeeded nor socket found".into())
             }
@@ -1107,7 +1257,7 @@ pub async fn probe_candidate(
             }
             let docker_bin = which::which("docker")
                 .map_err(|_| "docker CLI not found (needed for colima)".to_string())?;
-            Ok(Box::new(OciBackend::new(BackendDriver::Colima { bin: docker_bin })))
+            Ok(Box::new(CliBackend::new(docker_bin, DockerProtocol, "colima".into())))
         }
 
         // ── rancher-desktop ──────────────────────────────────────────────
@@ -1122,7 +1272,7 @@ pub async fn probe_candidate(
             )
             .exists();
             if sock {
-                Ok(Box::new(OciBackend::new(BackendDriver::RancherDesktop { bin })))
+                Ok(Box::new(CliBackend::new(bin, DockerProtocol, "rancher-desktop".into())))
             } else {
                 Err("rancher-desktop: nerdctl found but containerd socket missing".into())
             }
@@ -1155,7 +1305,7 @@ pub async fn probe_candidate(
                 }
             }
 
-            Ok(Box::new(OciBackend::new(BackendDriver::Podman { bin })))
+            Ok(Box::new(CliBackend::new(bin, DockerProtocol, "podman".into())))
         }
 
         // ── lima ─────────────────────────────────────────────────────────
@@ -1176,7 +1326,7 @@ pub async fn probe_candidate(
                 })
                 .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
                 .ok_or_else(|| "limactl: no running Lima instance found".to_string())?;
-            Ok(Box::new(OciBackend::new(BackendDriver::Lima { bin, instance })))
+            Ok(Box::new(CliBackend::new(bin, LimaProtocol { instance }, "lima".into())))
         }
 
         // ── nerdctl (standalone) ─────────────────────────────────────────
@@ -1186,7 +1336,7 @@ pub async fn probe_candidate(
             probe_run(bin.to_str().unwrap_or("nerdctl"), &["--version"])
                 .await
                 .map_err(|e| format!("nerdctl --version failed: {}", e))?;
-            Ok(Box::new(OciBackend::new(BackendDriver::Nerdctl { bin })))
+            Ok(Box::new(CliBackend::new(bin, DockerProtocol, "nerdctl".into())))
         }
 
         // ── docker ───────────────────────────────────────────────────────
@@ -1196,7 +1346,7 @@ pub async fn probe_candidate(
             probe_run(bin.to_str().unwrap_or("docker"), &["--version"])
                 .await
                 .map_err(|e| format!("docker --version failed: {}", e))?;
-            Ok(Box::new(OciBackend::new(BackendDriver::Docker { bin })))
+            Ok(Box::new(CliBackend::new(bin, DockerProtocol, "docker".into())))
         }
 
         other => Err(format!("unknown runtime '{}'", other)),
@@ -1211,6 +1361,8 @@ pub async fn probe_candidate(
 pub async fn detect_backend() -> std::result::Result<Box<dyn ContainerBackend>, ComposeError> {
     use std::time::Duration;
 
+    let mode = std::env::var("PERRY_CONTAINER_MODE").unwrap_or_else(|_| "local-first".into());
+
     // ── Override via env var ──────────────────────────────────────────────
     if let Ok(override_name) = std::env::var("PERRY_CONTAINER_BACKEND") {
         let name = override_name.trim().to_string();
@@ -1221,6 +1373,11 @@ pub async fn detect_backend() -> std::result::Result<Box<dyn ContainerBackend>, 
                 reason,
             }
         });
+    }
+
+    if mode == "server-first" {
+        // In server-first mode, we'd prefer remote daemon connections.
+        // For now, this is a placeholder for that logic.
     }
 
     // ── Platform probe sequence ───────────────────────────────────────────
@@ -1279,7 +1436,6 @@ mod tests {
                 m.insert("FOO".into(), "bar".into());
                 m
             }),
-            labels: None,
             cmd: Some(vec!["sh".into(), "-c".into(), "echo hi".into()]),
             entrypoint: None,
             network: Some("mynet".into()),
@@ -1291,9 +1447,9 @@ mod tests {
 
     #[test]
     fn docker_run_args_contains_expected_flags() {
-        let drv = BackendDriver::Docker { bin: "docker".into() };
+        let _drv = BackendDriver::Docker { bin: "docker".into() };
         let spec = dummy_spec(Some("mycontainer"));
-        let args = OciCommandBuilder::run_args(&drv, &spec);
+        let args = OciCommandBuilder::docker_run_args(&spec, true);
         assert!(args.contains(&"run".into()));
         assert!(args.contains(&"--rm".into()));
         assert!(args.contains(&"--detach".into()));
@@ -1312,30 +1468,30 @@ mod tests {
 
     #[test]
     fn docker_stop_args_with_timeout() {
-        let drv = BackendDriver::Docker { bin: "docker".into() };
-        let args = OciCommandBuilder::stop_args(&drv, "abc123", Some(10));
+        let _drv = BackendDriver::Docker { bin: "docker".into() };
+        let args = OciCommandBuilder::stop_args( "abc123", Some(10));
         assert_eq!(args, vec!["stop", "-t", "10", "abc123"]);
     }
 
     #[test]
     fn docker_stop_args_no_timeout() {
-        let drv = BackendDriver::Docker { bin: "docker".into() };
-        let args = OciCommandBuilder::stop_args(&drv, "abc123", None);
+        let _drv = BackendDriver::Docker { bin: "docker".into() };
+        let args = OciCommandBuilder::stop_args( "abc123", None);
         assert_eq!(args, vec!["stop", "abc123"]);
     }
 
     #[test]
     fn docker_remove_args_force() {
-        let drv = BackendDriver::Docker { bin: "docker".into() };
-        assert_eq!(OciCommandBuilder::remove_args(&drv, "c1", true), vec!["rm", "-f", "c1"]);
-        assert_eq!(OciCommandBuilder::remove_args(&drv, "c1", false), vec!["rm", "c1"]);
+        let _drv = BackendDriver::Docker { bin: "docker".into() };
+        assert_eq!(OciCommandBuilder::remove_args( "c1", true), vec!["rm", "-f", "c1"]);
+        assert_eq!(OciCommandBuilder::remove_args( "c1", false), vec!["rm", "c1"]);
     }
 
     #[test]
     fn docker_list_args() {
-        let drv = BackendDriver::Docker { bin: "docker".into() };
-        assert!(OciCommandBuilder::list_args(&drv, true).contains(&"--all".into()));
-        assert!(!OciCommandBuilder::list_args(&drv, false).contains(&"--all".into()));
+        let _drv = BackendDriver::Docker { bin: "docker".into() };
+        assert!(OciCommandBuilder::list_args( true).contains(&"--all".into()));
+        assert!(!OciCommandBuilder::list_args( false).contains(&"--all".into()));
     }
 
     #[test]
@@ -1375,7 +1531,7 @@ mod tests {
 
     #[test]
     fn create_network_args_with_config() {
-        let drv = BackendDriver::Docker { bin: "docker".into() };
+        let _drv = BackendDriver::Docker { bin: "docker".into() };
         let mut labels = HashMap::new();
         labels.insert("env".into(), "prod".into());
         let config = NetworkConfig {
@@ -1384,7 +1540,7 @@ mod tests {
             internal: true,
             enable_ipv6: false,
         };
-        let args = OciCommandBuilder::create_network_args(&drv, "mynet", &config);
+        let args = OciCommandBuilder::create_network_args( "mynet", &config);
         assert!(args.contains(&"network".into()));
         assert!(args.contains(&"create".into()));
         assert!(args.contains(&"--driver".into()));
@@ -1398,12 +1554,12 @@ mod tests {
 
     #[test]
     fn create_volume_args_with_config() {
-        let drv = BackendDriver::Docker { bin: "docker".into() };
+        let _drv = BackendDriver::Docker { bin: "docker".into() };
         let config = VolumeConfig {
             driver: Some("local".into()),
             labels: HashMap::new(),
         };
-        let args = OciCommandBuilder::create_volume_args(&drv, "myvol", &config);
+        let args = OciCommandBuilder::create_volume_args( "myvol", &config);
         assert!(args.contains(&"volume".into()));
         assert!(args.contains(&"create".into()));
         assert!(args.contains(&"--driver".into()));
@@ -1453,5 +1609,43 @@ mod tests {
         let r2: BackendProbeResult = serde_json::from_str(&json).unwrap();
         assert_eq!(r2.name, "podman");
         assert!(!r2.available);
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Feature: alloy-container, Property 3: ContainerSpec CLI arg round-trip
+    proptest! {
+        #[test]
+        fn test_docker_run_flags_completeness(
+            image in ".*",
+            name in prop::option::of(".*"),
+            network in prop::option::of(".*"),
+            rm in prop::option::of(any::<bool>())
+        ) {
+            let spec = ContainerSpec {
+                image,
+                name: name.clone(),
+                network: network.clone(),
+                rm,
+                ..Default::default()
+            };
+            let flags = docker_run_flags(&spec, true);
+            if let Some(n) = name {
+                assert!(flags.contains(&"--name".into()));
+                assert!(flags.contains(&n));
+            }
+            if let Some(net) = network {
+                assert!(flags.contains(&"--network".into()));
+                assert!(flags.contains(&net));
+            }
+            if rm.unwrap_or(false) {
+                assert!(flags.contains(&"--rm".into()));
+            }
+            assert!(flags.contains(&"--detach".into()));
+        }
     }
 }
