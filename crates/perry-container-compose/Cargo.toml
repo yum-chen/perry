@@ -8,6 +8,8 @@ authors = ["Perry Contributors"]
 description = "Port of container-compose/cli to Rust - Docker Compose-like experience for Apple Container / Podman"
 
 [dependencies]
+dialoguer = { version = "0.11", optional = true }
+console = { version = "0.15", optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = "0.9"
@@ -36,6 +38,7 @@ proptest = "1"
 default = []
 ffi = []  # Enable FFI exports for Perry TypeScript integration
 integration-tests = []  # Tests that require a running container backend
+installer = ["dep:dialoguer", "dep:console"]
 
 [[bin]]
 name = "perry-compose"

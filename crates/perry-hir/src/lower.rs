@@ -2461,11 +2461,12 @@ fn lower_module_decl(
                             // e.g., import { v4 as uuid } from 'uuid' -> uuid maps to uuid.v4
                             let ffi_name = match source.as_str() {
                                 "perry/container" => Some(format!("js_container_{}", imported)),
-                                "perry/compose" => match imported.as_str() {
+                                "perry/compose" | "perry/container-compose" => match imported.as_str() {
                                     "up" => Some("js_compose_start".to_string()),
                                     "down" => Some("js_compose_stop".to_string()),
                                     _ => Some(format!("js_compose_{}", imported)),
                                 },
+                                "perry/workloads" => Some(format!("js_workload_{}", imported)),
                                 _ => Some(imported.clone()),
                             };
                             ctx.register_native_module(local.clone(), source.clone(), ffi_name);

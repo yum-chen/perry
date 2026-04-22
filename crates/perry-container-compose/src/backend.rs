@@ -140,6 +140,8 @@ impl CliProtocol for DockerProtocol {
         for (k, v) in spec.env.as_ref().iter().flat_map(|m| m.iter()) { args.extend(["-e".into(), format!("{k}={v}")]); }
         if let Some(net) = &spec.network { args.extend(["--network".into(), net.clone()]); }
         if spec.rm.unwrap_or(false) { args.push("--rm".into()); }
+        if spec.read_only.unwrap_or(false) { args.push("--read-only".into()); }
+        for opt in spec.security_opts.as_ref().iter().flat_map(|v| v.iter()) { args.extend(["--security-opt".into(), opt.clone()]); }
         if let Some(ep) = &spec.entrypoint {
             args.push("--entrypoint".into());
             args.push(ep.join(" "));
@@ -441,14 +443,41 @@ impl CliProtocol for LimaProtocol {
     fn parse_container_id(&self, stdout: &str) -> Result<String> { DockerProtocol.parse_container_id(stdout) }
 }
 
+pub enum BackendDriver {
+    AppleContainer,
+    Orbstack,
+    Colima,
+    RancherDesktop,
+    Lima,
+    Podman,
+    Nerdctl,
+    Docker,
+}
+
+impl BackendDriver {
+    pub fn name(&self) -> &'static str {
+        match self {
+            BackendDriver::AppleContainer => "apple/container",
+            BackendDriver::Orbstack => "orbstack",
+            BackendDriver::Colima => "colima",
+            BackendDriver::RancherDesktop => "rancher-desktop",
+            BackendDriver::Lima => "lima",
+            BackendDriver::Podman => "podman",
+            BackendDriver::Nerdctl => "nerdctl",
+            BackendDriver::Docker => "docker",
+        }
+    }
+}
+
 pub struct CliBackend {
     pub bin: PathBuf,
     pub protocol: Box<dyn CliProtocol>,
+    pub driver: BackendDriver,
 }
 
 impl CliBackend {
-    pub fn new(bin: PathBuf, protocol: Box<dyn CliProtocol>) -> Self {
-        Self { bin, protocol }
+    pub fn new(bin: PathBuf, protocol: Box<dyn CliProtocol>, driver: BackendDriver) -> Self {
+        Self { bin, protocol, driver }
     }
 
     async fn exec_raw(&self, args: &[String]) -> Result<(String, String)> {
@@ -618,7 +647,7 @@ async fn probe_candidate(name: &str) -> std::result::Result<CliBackend, String> 
     match name {
         "apple/container" => {
             let bin = which_bin("container")?;
-            Ok(CliBackend::new(bin, Box::new(AppleContainerProtocol)))
+            Ok(CliBackend { bin, protocol: Box::new(AppleContainerProtocol), driver: BackendDriver::AppleContainer })
         }
         "podman" => {
             let bin = which_bin("podman")?;
@@ -629,11 +658,11 @@ async fn probe_candidate(name: &str) -> std::result::Result<CliBackend, String> 
                     return Err("no podman machine running".into());
                 }
             }
-            Ok(CliBackend::new(bin, Box::new(DockerProtocol)))
+            Ok(CliBackend { bin, protocol: Box::new(DockerProtocol), driver: BackendDriver::Podman })
         }
         "orbstack" => {
             let bin = which_bin("orb").or_else(|_| which_bin("docker")).map_err(|_| "orbstack not found")?;
-            Ok(CliBackend::new(bin, Box::new(DockerProtocol)))
+            Ok(CliBackend { bin, protocol: Box::new(DockerProtocol), driver: BackendDriver::Orbstack })
         }
         "colima" => {
             let bin = which_bin("colima")?;
@@ -642,7 +671,7 @@ async fn probe_candidate(name: &str) -> std::result::Result<CliBackend, String> 
                 return Err("colima not running".into());
             }
             let dbin = which_bin("docker").map_err(|_| "docker cli not found for colima")?;
-            Ok(CliBackend::new(dbin, Box::new(DockerProtocol)))
+            Ok(CliBackend { bin: dbin, protocol: Box::new(DockerProtocol), driver: BackendDriver::Colima })
         }
         "lima" => {
             let bin = which_bin("limactl")?;
@@ -652,15 +681,15 @@ async fn probe_candidate(name: &str) -> std::result::Result<CliBackend, String> 
                 .find(|v| v["status"] == "Running")
                 .and_then(|v| v["name"].as_str().map(|s| s.to_string()))
                 .ok_or("no running lima instance")?;
-            Ok(CliBackend::new(bin, Box::new(LimaProtocol { instance })))
+            Ok(CliBackend { bin, protocol: Box::new(LimaProtocol { instance }), driver: BackendDriver::Lima })
         }
         "nerdctl" => {
             let bin = which_bin("nerdctl")?;
-            Ok(CliBackend::new(bin, Box::new(DockerProtocol)))
+            Ok(CliBackend { bin, protocol: Box::new(DockerProtocol), driver: BackendDriver::Nerdctl })
         }
         "docker" => {
             let bin = which_bin("docker")?;
-            Ok(CliBackend::new(bin, Box::new(DockerProtocol)))
+            Ok(CliBackend { bin, protocol: Box::new(DockerProtocol), driver: BackendDriver::Docker })
         }
         _ => Err("unknown backend".into()),
     }

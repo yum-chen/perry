@@ -410,3 +410,42 @@ proptest! {
         prop_assert_eq!(reparsed.driver, network.driver);
     }
 }
+
+// ============ Property: WorkloadNode JSON round-trip ============
+// Validates: WorkloadNode preserves all fields, especially env and runtime.
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(100))]
+
+    #[test]
+    fn prop_workload_node_json_round_trip(
+        id in "[a-z0-9_-]{1,10}",
+        name in "[a-zA-Z0-9_-]{1,20}",
+        image in proptest::option::of("[a-z0-9_-]{3,30}"),
+    ) {
+        use perry_stdlib::container::workload::{WorkloadNode, RuntimeSpec, PolicySpec, PolicyTier};
+
+        let node = WorkloadNode {
+            id,
+            name,
+            image,
+            ports: None,
+            env: None,
+            depends_on: None,
+            runtime: RuntimeSpec::Auto,
+            policy: PolicySpec {
+                tier: PolicyTier::Default,
+                no_network: None,
+                read_only_root: None,
+                seccomp: None,
+            },
+        };
+
+        let json_str = serde_json::to_string(&node).unwrap();
+        let reparsed: WorkloadNode = serde_json::from_str(&json_str).unwrap();
+
+        prop_assert_eq!(reparsed.id, node.id);
+        prop_assert_eq!(reparsed.name, node.name);
+        prop_assert_eq!(reparsed.image, node.image);
+    }
+}

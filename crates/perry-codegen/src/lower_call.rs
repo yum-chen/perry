@@ -4601,6 +4601,14 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
     NativeModSig { module: "perry/compose", has_receiver: false, method: "js_compose_ps",
         class_filter: None,
         runtime: "js_compose_ps", args: &[NA_PTR], ret: NR_PTR },
+
+    // ========== perry/workloads ==========
+    NativeModSig { module: "perry/workloads", has_receiver: false, method: "js_workload_graph",
+        class_filter: None,
+        runtime: "js_workload_graph", args: &[NA_STR, NA_STR], ret: NR_STR },
+    NativeModSig { module: "perry/workloads", has_receiver: false, method: "js_workload_runGraph",
+        class_filter: None,
+        runtime: "js_workload_runGraph", args: &[NA_STR, NA_STR], ret: NR_PTR },
 ];
 
 /// Look up a native module method in the static dispatch table.

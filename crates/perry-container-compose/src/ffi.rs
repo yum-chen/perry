@@ -69,11 +69,13 @@ fn parse_compose_file(file_ptr: *const StringHeader) -> Option<PathBuf> {
 }
 
 fn make_engine(files: Vec<PathBuf>) -> Result<Arc<ComposeEngine>, String> {
-    let proj = crate::project::ComposeProject::load_from_files(&files, None, &[])
-        .map_err(|e| e.to_string())?;
-    let backend: Arc<dyn crate::backend::ContainerBackend> = block(crate::backend::detect_backend())
-        .map(Arc::from)
-        .map_err(|e| e.to_string())?;
+    let config = crate::config::ProjectConfig::new(files, None, vec![]);
+    let proj = crate::project::ComposeProject::load(&config)
+        .map_err(|e: crate::error::ComposeError| e.to_string())?;
+    let backend: Arc<dyn crate::backend::ContainerBackend> = match block(crate::backend::detect_backend()) {
+        Ok(b) => Arc::new(b),
+        Err(e) => return Err(format!("No backend found: {:?}", e)),
+    };
     Ok(Arc::new(ComposeEngine::new(proj.spec, proj.project_name, backend)))
 }
 
@@ -98,7 +100,7 @@ pub unsafe extern "C" fn js_compose_stop(file_ptr: *const StringHeader) -> *cons
     let files: Vec<PathBuf> = parse_compose_file(file_ptr).into_iter().collect();
     match make_engine(files) {
         Err(e) => json_err(&e),
-        Ok(engine) => match block(engine.down(false, false)) {
+        Ok(engine) => match block(engine.down(&[], false, false)) {
             Ok(_) => json_ok("null"),
             Err(e) => json_err(&e.to_string()),
         },
@@ -189,7 +191,8 @@ pub unsafe extern "C" fn js_compose_exec(
 #[no_mangle]
 pub unsafe extern "C" fn js_compose_config(file_ptr: *const StringHeader) -> *const StringHeader {
     let files: Vec<PathBuf> = parse_compose_file(file_ptr).into_iter().collect();
-    match crate::project::ComposeProject::load_from_files(&files, None, &[]) {
+    let config = crate::config::ProjectConfig::new(files, None, vec![]);
+    match crate::project::ComposeProject::load(&config) {
         Err(e) => json_err(&e.to_string()),
         Ok(proj) => {
             let yaml = proj.spec.to_yaml().unwrap_or_default();

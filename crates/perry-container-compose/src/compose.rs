@@ -10,6 +10,7 @@ use crate::service;
 use crate::types::{
     ComposeHandle, ComposeSpec, ContainerInfo, ContainerSpec,
 };
+use crate::service::Service;
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -29,6 +30,30 @@ pub struct ComposeEngine {
     pub backend: Arc<dyn ContainerBackend>,
     /// Services that were started in this session
     started_containers: std::sync::Mutex<Vec<String>>,
+}
+
+pub struct WorkloadGraphEngine {
+    pub backend: Arc<dyn ContainerBackend>,
+}
+
+impl WorkloadGraphEngine {
+    pub fn new(backend: Arc<dyn ContainerBackend>) -> Self {
+        Self { backend }
+    }
+}
+
+pub struct Compose {
+    pub services: IndexMap<String, Service>,
+}
+
+impl Compose {
+    pub fn parse(yaml: &str) -> Result<Self> {
+        let spec = ComposeSpec::parse_str(yaml)?;
+        let services = spec.services.into_iter()
+            .map(|(name, config)| (name.clone(), Service::new(name, config)))
+            .collect();
+        Ok(Self { services })
+    }
 }
 
 impl ComposeEngine {

@@ -5,6 +5,7 @@
 pub mod backend;
 pub mod capability;
 pub mod compose;
+pub mod workload;
 pub mod types;
 pub mod verification;
 
@@ -29,9 +30,22 @@ async fn get_global_backend() -> Result<&'static Arc<dyn ContainerBackend>, Cont
         return Ok(b);
     }
 
-    let b = detect_backend().await
-        .map(|b| Arc::new(b) as Arc<dyn ContainerBackend>)
-        .map_err(|probed| ContainerError::NoBackendFound { probed })?;
+    let b = match detect_backend().await {
+        Ok(b) => Arc::new(b) as Arc<dyn ContainerBackend>,
+        Err(probed) => {
+            // Try interactive installer if TTY
+            match perry_container_compose::installer::BackendInstaller::run().await {
+                Ok(driver) => {
+                    // Installer success re-runs detect_backend, so this should pass now
+                    match detect_backend().await {
+                        Ok(b) => Arc::new(b) as Arc<dyn ContainerBackend>,
+                        Err(probed2) => return Err(ContainerError::NoBackendFound { probed: probed2 }),
+                    }
+                }
+                Err(_) => return Err(ContainerError::NoBackendFound { probed }),
+            }
+        }
+    };
 
     let _ = BACKEND.set(b);
     Ok(BACKEND.get().unwrap())
@@ -708,6 +722,70 @@ pub unsafe extern "C" fn js_compose_exec(
             Ok(logs) => {
                 let h = types::register_container_logs(logs);
                 Ok(h as u64)
+            }
+            Err(e) => Err::<u64, String>(e.to_string()),
+        }
+    });
+
+    promise
+}
+
+// ============ Workload Graph Functions ============
+
+/// Construct and serialize a WorkloadGraph
+/// FFI: js_workload_graph(name: *const StringHeader, spec_json: *const StringHeader) -> *const StringHeader
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_graph(name_ptr: *const StringHeader, spec_ptr: *const StringHeader) -> *const StringHeader {
+    let name = string_from_header(name_ptr).unwrap_or_default();
+    let spec_json = string_from_header(spec_ptr).unwrap_or_default();
+    let nodes: perry_container_compose::indexmap::IndexMap<String, workload::WorkloadNode> = serde_json::from_str(&spec_json).unwrap_or_default();
+
+    let graph = workload::WorkloadGraph { name, nodes };
+    let json = serde_json::to_string(&graph).unwrap_or_default();
+    string_to_js(&json)
+}
+
+/// Execute a workload graph
+/// FFI: js_workload_runGraph(graph_json: *const StringHeader, opts_json: *const StringHeader) -> *mut Promise
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_runGraph(graph_ptr: *const StringHeader, opts_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
+    let graph_json = string_from_header(graph_ptr).unwrap_or_default();
+    let opts_json = string_from_header(opts_ptr).unwrap_or_default();
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let graph: workload::WorkloadGraph = serde_json::from_str(&graph_json)
+            .map_err(|e| format!("Failed to parse graph: {}", e))?;
+        let _opts: workload::RunGraphOptions = serde_json::from_str(&opts_json)
+            .unwrap_or(workload::RunGraphOptions { strategy: None, on_failure: None });
+
+        let backend = match get_global_backend().await {
+            Ok(b) => Arc::clone(b),
+            Err(e) => return Err::<u64, String>(e.to_string()),
+        };
+
+        // For MVP, workload graph is backed by ComposeEngine
+        let mut services = perry_container_compose::indexmap::IndexMap::new();
+        for (id, node) in graph.nodes {
+            let mut svc = perry_container_compose::types::ComposeService::default();
+            svc.image = node.image;
+            svc.ports = node.ports.map(|p| p.into_iter().map(|s| perry_container_compose::types::PortSpec::Short(serde_yaml::Value::String(s))).collect());
+            svc.depends_on = node.depends_on.map(perry_container_compose::types::DependsOnSpec::List);
+            // env mapping omitted for MVP
+            services.insert(id, svc);
+        }
+
+        let spec = perry_container_compose::types::ComposeSpec {
+            name: Some(graph.name.clone()),
+            services,
+            ..Default::default()
+        };
+
+        let engine = compose::ComposeWrapper::new(spec, backend);
+        match engine.up().await {
+            Ok(handle) => {
+                let handle_id = types::register_compose_handle(handle);
+                Ok(handle_id as u64)
             }
             Err(e) => Err::<u64, String>(e.to_string()),
         }
