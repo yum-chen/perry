@@ -27,6 +27,13 @@ pub struct VolumeConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ExecutionStrategy {
+    CliExec { bin: PathBuf },
+    ApiSocket { socket: PathBuf },
+    VmSpawn { config: serde_json::Value },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendProbeResult {
     pub name: String,
     pub available: bool,
@@ -36,6 +43,9 @@ pub struct BackendProbeResult {
 #[async_trait]
 pub trait ContainerBackend: Send + Sync {
     fn backend_name(&self) -> &str;
+    fn strategy(&self) -> ExecutionStrategy;
+    fn isolation_level(&self) -> crate::types::IsolationLevel;
+
     async fn check_available(&self) -> Result<()>;
     async fn run(&self, spec: &ContainerSpec) -> Result<ContainerHandle>;
     async fn create(&self, spec: &ContainerSpec) -> Result<ContainerHandle>;
@@ -60,6 +70,7 @@ pub trait ContainerBackend: Send + Sync {
     async fn remove_network(&self, name: &str) -> Result<()>;
     async fn create_volume(&self, name: &str, config: &VolumeConfig) -> Result<()>;
     async fn remove_volume(&self, name: &str) -> Result<()>;
+    async fn build(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Result<()>;
 }
 
 pub trait CliProtocol: Send + Sync {
@@ -335,7 +346,13 @@ impl<P: CliProtocol> CliBackend<P> {
 #[async_trait]
 impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
     fn backend_name(&self) -> &str {
-        self.bin.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
+        self.protocol.protocol_name()
+    }
+    fn strategy(&self) -> ExecutionStrategy {
+        ExecutionStrategy::CliExec { bin: self.bin.clone() }
+    }
+    fn isolation_level(&self) -> crate::types::IsolationLevel {
+        crate::types::IsolationLevel::Container
     }
     async fn check_available(&self) -> Result<()> {
         let mut cmd = Command::new(&self.bin);
@@ -386,6 +403,10 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
     async fn remove_network(&self, name: &str) -> Result<()> { self.exec_raw(self.protocol.remove_network_args(name)).await.map(|_| ()) }
     async fn create_volume(&self, name: &str, config: &VolumeConfig) -> Result<()> { self.exec_raw(self.protocol.create_volume_args(name, config)).await.map(|_| ()) }
     async fn remove_volume(&self, name: &str) -> Result<()> { self.exec_raw(self.protocol.remove_volume_args(name)).await.map(|_| ()) }
+    async fn build(&self, _spec: &crate::types::ComposeServiceBuild, _image_name: &str) -> Result<()> {
+        // TODO: implement build
+        Ok(())
+    }
 }
 
 pub async fn detect_backend() -> std::result::Result<Box<dyn ContainerBackend>, Vec<BackendProbeResult>> {

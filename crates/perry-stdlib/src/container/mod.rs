@@ -3,32 +3,19 @@
 pub mod backend;
 pub mod capability;
 pub mod compose;
+pub mod context;
 pub mod types;
 pub mod verification;
 
 pub(crate) mod mod_priv {
-    use perry_container_compose::backend::{detect_backend, ContainerBackend, BackendProbeResult};
-    use perry_container_compose::error::ComposeError;
-    use std::sync::{Arc, OnceLock};
-
-    static BACKEND: OnceLock<Arc<dyn ContainerBackend>> = OnceLock::new();
+    use super::context::ContainerContext;
+    use perry_container_compose::backend::ContainerBackend;
+    use std::sync::Arc;
 
     pub fn get_global_backend_instance() -> Arc<dyn ContainerBackend> {
-        BACKEND.get_or_init(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                detect_backend().await.expect("No container backend found")
-            }).into()
-        }).clone()
-    }
-
-    pub async fn get_backend() -> Result<Arc<dyn ContainerBackend>, Vec<BackendProbeResult>> {
-        if let Some(b) = BACKEND.get() {
-            return Ok(Arc::clone(b));
-        }
-        let b = detect_backend().await?;
-        let shared = Arc::from(b);
-        let _ = BACKEND.set(Arc::clone(&shared));
-        Ok(shared)
+        tokio::runtime::Handle::current().block_on(async {
+            ContainerContext::global().get_backend().await.expect("No container backend found")
+        })
     }
 }
 
@@ -49,6 +36,11 @@ unsafe fn string_from_header(ptr: *const StringHeader) -> Option<String> {
 pub unsafe fn string_to_js(s: &str) -> *const StringHeader {
     let bytes = s.as_bytes();
     perry_runtime::js_string_from_bytes(bytes.as_ptr(), bytes.len() as u32)
+}
+
+pub unsafe fn parse_workload_graph_json(ptr: *const StringHeader) -> Result<perry_container_compose::types::WorkloadGraph, String> {
+    let s = string_from_header(ptr).ok_or("Invalid graph pointer")?;
+    serde_json::from_str(&s).map_err(|e| e.to_string())
 }
 
 pub fn compose_error_to_js(e: &ComposeError) -> String {
@@ -201,6 +193,23 @@ pub unsafe extern "C" fn js_container_exec(id_ptr: *const StringHeader, cmd_json
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn js_container_build(
+    spec_json: *const StringHeader,
+    image_name_ptr: *const StringHeader,
+) -> *mut Promise {
+    let promise = js_promise_new();
+    let spec_str = string_from_header(spec_json).unwrap_or_default();
+    let spec: perry_container_compose::types::ComposeServiceBuild = serde_json::from_str(&spec_str).unwrap_or_default();
+    let image_name = string_from_header(image_name_ptr).unwrap_or_default();
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let backend = get_global_backend_instance();
+        backend.build(&spec, &image_name).await.map(|_| 0u64).map_err(|e| compose_error_to_js(&e))
+    });
+    promise
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn js_container_pullImage(image_ptr: *const StringHeader) -> *mut Promise {
     let promise = js_promise_new();
     let image = string_from_header(image_ptr).unwrap_or_default();
@@ -274,8 +283,8 @@ pub unsafe extern "C" fn js_container_composeUp(spec_json: *const StringHeader) 
         let backend = get_global_backend_instance();
         let project_name = spec.name.clone().unwrap_or_else(|| "perry-stack".to_string());
         let engine = Arc::new(perry_container_compose::ComposeEngine::new(spec, project_name, backend));
-        match engine.clone().up(&[], true, true, false).await {
-            Ok(handle) => Ok(types::register_compose_engine(engine, handle.stack_id)),
+        match engine.up(&[], true, true, false).await {
+            Ok(_) => Ok(types::register_compose_engine(engine, 0)),
             Err(e) => Err(compose_error_to_js(&e)),
         }
     });
@@ -429,6 +438,34 @@ pub unsafe extern "C" fn js_container_compose_restart(handle_id: u64, services_j
             engine.restart(&services).await.map(|_| 0u64).map_err(|e| compose_error_to_js(&e))
         } else {
             Err("Invalid compose handle".to_string())
+        }
+    });
+    promise
+}
+
+// ============ Workload Graph Functions ============
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_runGraph(graph_json: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
+    let graph = match parse_workload_graph_json(graph_json) {
+        Ok(g) => g,
+        Err(e) => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>(e) });
+            return promise;
+        }
+    };
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let backend = get_global_backend_instance();
+        let project_name = format!("workload-{}", graph.name);
+        let engine = perry_container_compose::compose::WorkloadGraphEngine::new(graph, project_name, backend);
+        match engine.run().await {
+            Ok(full_engine) => {
+                // Register using same ComposeEngine registry
+                Ok(types::register_compose_engine(full_engine, 0))
+            }
+            Err(e) => Err(compose_error_to_js(&e)),
         }
     });
     promise

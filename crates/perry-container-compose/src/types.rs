@@ -104,6 +104,15 @@ pub struct ComposeDependsOn {
     pub restart: Option<bool>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum IsolationLevel {
+    None,
+    Process,
+    Container,
+    MicroVm,
+    Wasm,
+}
+
 /// `depends_on` can be a list of service names or a map with conditions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -468,6 +477,7 @@ pub struct ComposeService {
     pub depends_on: Option<DependsOnSpec>,
     pub restart: Option<String>,
     pub healthcheck: Option<ComposeHealthcheck>,
+    pub isolation_level: Option<IsolationLevel>,
     pub container_name: Option<String>,
     pub labels: Option<ListOrDict>,
     pub hostname: Option<String>,
@@ -686,6 +696,9 @@ pub struct ContainerSpec {
     pub entrypoint: Option<Vec<String>>,
     pub network: Option<String>,
     pub rm: Option<bool>,
+    pub read_only: Option<bool>,
+    pub seccomp: Option<String>,
+    pub isolation_level: Option<IsolationLevel>,
 }
 
 /// Handle returned after creating/running a container.
@@ -721,4 +734,68 @@ pub struct ImageInfo {
     pub tag: String,
     pub size: u64,
     pub created: String,
+}
+
+// ============ Workload Graph Types ============
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RuntimeSpec {
+    Oci,
+    Microvm { config: Option<serde_json::Value> },
+    Wasm { module: Option<String> },
+    Auto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicySpec {
+    pub tier: String, // "default" | "isolated" | "hardened" | "untrusted"
+    pub no_network: Option<bool>,
+    pub read_only_root: Option<bool>,
+    pub seccomp: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkloadRef {
+    pub node_id: String,
+    pub projection: String, // "endpoint" | "ip" | "internal_url"
+    pub port: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkloadNode {
+    pub id: String,
+    pub name: String,
+    pub image: Option<String>,
+    pub resources: Option<serde_json::Value>,
+    pub ports: Option<Vec<String>>,
+    pub env: Option<std::collections::HashMap<String, serde_json::Value>>, // string or WorkloadRef
+    pub depends_on: Option<Vec<String>>,
+    pub runtime: RuntimeSpec,
+    pub policy: PolicySpec,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkloadGraph {
+    pub name: String,
+    pub nodes: std::collections::HashMap<String, WorkloadNode>,
+    pub edges: Vec<WorkloadEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkloadEdge {
+    pub from: String,
+    pub to: String,
+    pub condition: Option<String>, // "started" | "healthy" | "completed"
+}
+
+impl WorkloadNode {
+    pub fn isolation_level_from_policy(&self) -> IsolationLevel {
+        match self.policy.tier.as_str() {
+            "untrusted" => IsolationLevel::MicroVm,
+            "hardened" => IsolationLevel::Container,
+            "isolated" => IsolationLevel::Container,
+            _ => IsolationLevel::Container,
+        }
+    }
 }

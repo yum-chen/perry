@@ -3,50 +3,50 @@
 use perry_runtime::StringHeader;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::common::handle::{self, Handle};
+use super::context::ContainerContext;
 use perry_container_compose::ComposeEngine;
 use std::sync::Arc;
 
 // ============ Handle Registry ============
 
 pub fn register_container_handle(h: ContainerHandle) -> u64 {
-    handle::register_handle(h) as u64
+    ContainerContext::global().register_handle(h)
 }
 
-pub fn register_compose_engine(engine: Arc<ComposeEngine>, stack_id: u64) -> u64 {
-    handle::register_handle_with_id(engine, stack_id as Handle) as u64
+pub fn register_compose_engine(engine: Arc<ComposeEngine>, _stack_id: u64) -> u64 {
+    ContainerContext::global().register_handle(engine)
 }
 
 pub fn get_compose_engine(id: u64) -> Option<Arc<ComposeEngine>> {
-    handle::get_handle::<Arc<ComposeEngine>>(id as Handle).map(|e| Arc::clone(e))
+    ContainerContext::global().get_handle::<ComposeEngine>(id)
 }
 
 pub fn register_container_info_list(list: Vec<ContainerInfo>) -> u64 {
-    handle::register_handle(list) as u64
+    ContainerContext::global().register_handle(list)
 }
 
 pub fn register_container_info(info: ContainerInfo) -> u64 {
-    handle::register_handle(info) as u64
+    ContainerContext::global().register_handle(info)
 }
 
 pub fn register_container_logs(logs: ContainerLogs) -> u64 {
-    handle::register_handle(logs) as u64
+    ContainerContext::global().register_handle(logs)
 }
 
 pub fn register_image_info_list(list: Vec<ImageInfo>) -> u64 {
-    handle::register_handle(list) as u64
+    ContainerContext::global().register_handle(list)
 }
 
 pub fn register_string(s: String) -> u64 {
-    handle::register_handle(s) as u64
+    ContainerContext::global().register_handle(s)
 }
 
 pub fn take_container_info_list(id: u64) -> Option<Vec<ContainerInfo>> {
-    handle::take_handle::<Vec<ContainerInfo>>(id as Handle)
+    ContainerContext::global().handles.remove(&id).and_then(|(_, v)| v.downcast::<Vec<ContainerInfo>>().ok()).map(|b| *b)
 }
 
 pub fn take_container_logs(id: u64) -> Option<ContainerLogs> {
-    handle::take_handle::<ContainerLogs>(id as Handle)
+    ContainerContext::global().handles.remove(&id).and_then(|(_, v)| v.downcast::<ContainerLogs>().ok()).map(|b| *b)
 }
 
 // ============ Core Container Types ============
@@ -76,6 +76,9 @@ impl From<ContainerSpec> for perry_container_compose::types::ContainerSpec {
             entrypoint: spec.entrypoint,
             network: spec.network,
             rm: spec.rm,
+            read_only: None,
+            seccomp: None,
+            isolation_level: None,
         }
     }
 }

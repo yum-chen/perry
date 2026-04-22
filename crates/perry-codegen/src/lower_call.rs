@@ -2366,6 +2366,12 @@ pub(crate) fn lower_native_method_call(
         }
     }
 
+    if module == "perry/workloads" && object.is_none() {
+        if let Some(sig) = perry_workloads_table_lookup(method) {
+            return lower_perry_ui_table_call(ctx, sig, args);
+        }
+    }
+
     if module == "perry/ui"
         && object.is_none()
         && method != "App"
@@ -3962,6 +3968,8 @@ static PERRY_CONTAINER_TABLE: &[UiSig] = &[
             args: &[], ret: UiReturnKind::F64 },
     UiSig { method: "composeUp", runtime: "js_container_composeUp",
             args: &[UiArgKind::Json], ret: UiReturnKind::Promise },
+    UiSig { method: "build", runtime: "js_container_build",
+            args: &[UiArgKind::Json, UiArgKind::Str], ret: UiReturnKind::Promise },
 ];
 
 fn perry_container_table_lookup(method: &str) -> Option<&'static UiSig> {
@@ -3995,6 +4003,19 @@ static PERRY_CONTAINER_COMPOSE_TABLE: &[UiSig] = &[
 
 fn perry_container_compose_table_lookup(method: &str) -> Option<&'static UiSig> {
     PERRY_CONTAINER_COMPOSE_TABLE.iter().find(|s| s.method == method)
+}
+
+// =============================================================================
+// perry/workloads dispatch table
+// =============================================================================
+
+static PERRY_WORKLOADS_TABLE: &[UiSig] = &[
+    UiSig { method: "runGraph", runtime: "js_workload_runGraph",
+            args: &[UiArgKind::Json], ret: UiReturnKind::Promise },
+];
+
+fn perry_workloads_table_lookup(method: &str) -> Option<&'static UiSig> {
+    PERRY_WORKLOADS_TABLE.iter().find(|s| s.method == method)
 }
 
 /// Lower a perry/ui call described by `sig`. Walks each arg, applies

@@ -23,15 +23,16 @@ impl ComposeWrapper {
         Self { engine }
     }
 
-    pub async fn up(self: Arc<Self>) -> Result<perry_container_compose::types::ComposeHandle, ComposeError> {
-        self.engine.clone().up(&[], true, false, false).await
+    pub async fn up(self: Arc<Self>) -> Result<Arc<ComposeEngine>, ComposeError> {
+        self.engine.up(&[], true, false, false).await?;
+        Ok(Arc::clone(&self.engine))
     }
 }
 
 pub async fn compose_up(
     spec: ComposeSpec,
     backend: Arc<dyn ContainerBackend>,
-) -> Result<perry_container_compose::types::ComposeHandle, ComposeError> {
+) -> Result<Arc<ComposeEngine>, ComposeError> {
     let wrapper = Arc::new(ComposeWrapper::new(spec, backend));
     wrapper.up().await
 }

@@ -9,11 +9,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-static COMPOSE_ENGINES: once_cell::sync::Lazy<dashmap::DashMap<u64, Arc<ComposeEngine>>> =
-    once_cell::sync::Lazy::new(|| dashmap::DashMap::new());
-
-static NEXT_STACK_ID: AtomicU64 = AtomicU64::new(1);
-
 pub struct ComposeEngine {
     pub spec: ComposeSpec,
     pub project_name: String,
@@ -33,25 +28,13 @@ impl ComposeEngine {
         }
     }
 
-    fn register(self: Arc<Self>) -> ComposeHandle {
-        let stack_id = NEXT_STACK_ID.fetch_add(1, Ordering::SeqCst);
-        let services: Vec<String> = self.spec.services.keys().cloned().collect();
-        let handle = ComposeHandle {
-            stack_id,
-            project_name: self.project_name.clone(),
-            services,
-        };
-        COMPOSE_ENGINES.insert(stack_id, self);
-        handle
-    }
-
     pub async fn up(
-        self: Arc<Self>,
+        &self,
         services: &[String],
         _detach: bool,
         _build: bool,
         _remove_orphans: bool,
-    ) -> Result<ComposeHandle> {
+    ) -> Result<()> {
         // 1. Create networks
         if let Some(networks) = &self.spec.networks {
             for (name, config) in networks {
@@ -113,6 +96,9 @@ impl ComposeEngine {
                 entrypoint: None, // TODO: handle entrypoint
                 network,
                 rm: None,
+                read_only: svc.read_only,
+                seccomp: None,
+                isolation_level: svc.isolation_level.clone(),
             };
 
             match self.backend.run(&container_spec).await {
@@ -133,7 +119,7 @@ impl ComposeEngine {
             }
         }
 
-        Ok(self.register())
+        Ok(())
     }
 
     pub async fn down(
@@ -268,8 +254,39 @@ impl ComposeEngine {
     }
 }
 
-pub fn get_engine(handle_id: u64) -> Option<Arc<ComposeEngine>> {
-    COMPOSE_ENGINES.get(&handle_id).map(|r| Arc::clone(r.value()))
+pub struct WorkloadGraphEngine {
+    pub graph: crate::types::WorkloadGraph,
+    pub project_name: String,
+    pub backend: Arc<dyn ContainerBackend>,
+}
+
+impl WorkloadGraphEngine {
+    pub fn new(graph: crate::types::WorkloadGraph, project_name: String, backend: Arc<dyn ContainerBackend>) -> Self {
+        Self { graph, project_name, backend }
+    }
+
+    pub async fn run(&self) -> Result<Arc<ComposeEngine>> {
+        // Map WorkloadGraph to ComposeSpec internally for reuse
+        let mut services = IndexMap::new();
+        for (id, node) in &self.graph.nodes {
+            let mut svc = crate::types::ComposeService::default();
+            svc.image = node.image.clone();
+            svc.ports = node.ports.as_ref().map(|p| p.iter().map(|s| crate::types::PortSpec::Short(serde_yaml::Value::String(s.clone()))).collect());
+            svc.isolation_level = Some(node.isolation_level_from_policy());
+            // TODO: map other fields
+            services.insert(id.clone(), svc);
+        }
+
+        let spec = crate::types::ComposeSpec {
+            name: Some(self.graph.name.clone()),
+            services,
+            ..Default::default()
+        };
+
+        let engine = Arc::new(ComposeEngine::new(spec, self.project_name.clone(), Arc::clone(&self.backend)));
+        engine.up(&[], true, false, false).await?;
+        Ok(engine)
+    }
 }
 
 pub fn resolve_startup_order(spec: &ComposeSpec) -> Result<Vec<String>> {
