@@ -3,6 +3,7 @@
 pub mod backend;
 pub mod capability;
 pub mod compose;
+pub mod workload;
 pub mod types;
 pub mod verification;
 
@@ -598,4 +599,84 @@ pub unsafe extern "C" fn js_container_build(spec_json_ptr: *const StringHeader, 
         Ok(0)
     });
     promise
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_graph(name_ptr: *const StringHeader, spec_json_ptr: *const StringHeader) -> *const StringHeader {
+    // Shorthand for serializing a WorkloadGraph
+    let json = string_from_header(spec_json_ptr).unwrap_or_else(|| "{}".to_string());
+    perry_runtime::js_string_from_bytes(json.as_ptr(), json.len() as u32)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_runGraph(graph_json_ptr: *const StringHeader, opts_json_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
+    let graph_json = string_from_header(graph_json_ptr).unwrap_or_default();
+    let opts_json = string_from_header(opts_json_ptr).unwrap_or_default();
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let backend = get_global_backend_instance().await.map_err(|e| e.to_string())?;
+        let engine = perry_container_compose::compose::WorkloadGraphEngine::new(backend);
+        engine.run(&graph_json, &opts_json).await.map_err(|e| e.to_string())
+    });
+    promise
+}
+
+#[cfg(test)]
+mod smoke_tests {
+    use super::*;
+
+    #[test]
+    fn test_smoke_module_init() {
+        // Just verify it doesn't panic
+        let _ = js_container_getBackend();
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_handle_down(handle_id: f64, opts_json_ptr: *const StringHeader) -> *mut Promise {
+    js_container_compose_down(handle_id, 0.0) // Shorthand
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_handle_status(handle_id: f64) -> *mut Promise {
+    js_container_compose_ps(handle_id) // Shorthand
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_node(name_ptr: *const StringHeader, spec_json_ptr: *const StringHeader) -> *const StringHeader {
+    let json = string_from_header(spec_json_ptr).unwrap_or_else(|| "{}".to_string());
+    perry_runtime::js_string_from_bytes(json.as_ptr(), json.len() as u32)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_inspectGraph(graph_json_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
+    let graph_json = string_from_header(graph_json_ptr).unwrap_or_default();
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        // Implementation stub
+        Ok(0)
+    });
+    promise
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_handle_graph(handle_id: f64) -> *const StringHeader {
+    let json = "{}";
+    perry_runtime::js_string_from_bytes(json.as_ptr(), json.len() as u32)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_handle_logs(handle_id: f64, node_ptr: *const StringHeader, opts_json_ptr: *const StringHeader) -> *mut Promise {
+    js_container_compose_logs(handle_id, node_ptr, 0.0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_handle_exec(handle_id: f64, node_ptr: *const StringHeader, cmd_json_ptr: *const StringHeader) -> *mut Promise {
+    js_container_compose_exec(handle_id, node_ptr, cmd_json_ptr, std::ptr::null())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_handle_ps(handle_id: f64) -> *mut Promise {
+    js_container_compose_ps(handle_id)
 }

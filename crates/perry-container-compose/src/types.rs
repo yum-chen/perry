@@ -136,6 +136,15 @@ pub enum VolumeType {
     Image,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum IsolationLevel {
+    None,
+    Process,
+    Container,
+    MicroVm,
+    Wasm,
+}
+
 /// Long-form volume mount (compose-spec §service.volumes[])
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComposeServiceVolume {
@@ -676,6 +685,7 @@ pub struct ComposeHandle {
 
 /// Specification for running a single container.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ContainerSpec {
     pub image: String,
     pub name: Option<String>,
@@ -717,11 +727,80 @@ pub struct ContainerLogs {
 }
 
 /// Information about a container image.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ImageInfo {
     pub id: String,
     pub repository: String,
     pub tag: String,
     pub size: u64,
     pub created: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendInfo {
+    pub name: String,
+    pub available: bool,
+    pub reason: Option<String>,
+    pub version: Option<String>,
+    pub mode: String, // "local" | "remote"
+    pub isolation_level: IsolationLevel,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Feature: alloy-container, Property 4: Data model JSON round-trip
+    proptest! {
+        #[test]
+        fn test_container_spec_roundtrip(image in ".*", name in prop::option::of(".*"), rm in prop::option::of(any::<bool>())) {
+            let spec = ContainerSpec {
+                image,
+                name,
+                rm,
+                ..Default::default()
+            };
+            let json = serde_json::to_string(&spec).unwrap();
+            let de: ContainerSpec = serde_json::from_str(&json).unwrap();
+            assert_eq!(spec, de);
+        }
+
+        #[test]
+        fn test_image_info_roundtrip(id in ".*", repository in ".*", tag in ".*", size in any::<u64>(), created in ".*") {
+            let info = ImageInfo { id, repository, tag, size, created };
+            let json = serde_json::to_string(&info).unwrap();
+            let de: ImageInfo = serde_json::from_str(&json).unwrap();
+            assert_eq!(info, de);
+        }
+    }
+
+    // Feature: alloy-container, Property 12: depends_on condition validation
+    #[test]
+    fn test_depends_on_condition_validation() {
+        let valid = vec!["service_started", "service_healthy", "service_completed_successfully"];
+        for v in valid {
+            let json = format!("\"{}\"", v);
+            let _: DependsOnCondition = serde_json::from_str(&json).unwrap();
+        }
+
+        let invalid = "\"invalid_condition\"";
+        let res: std::result::Result<DependsOnCondition, _> = serde_json::from_str(invalid);
+        assert!(res.is_err());
+    }
+
+    // Feature: alloy-container, Property 13: Volume type validation
+    #[test]
+    fn test_volume_type_validation() {
+        let valid = vec!["bind", "volume", "tmpfs", "cluster", "npipe", "image"];
+        for v in valid {
+            let json = format!("\"{}\"", v);
+            let _: VolumeType = serde_json::from_str(&json).unwrap();
+        }
+
+        let invalid = "\"invalid_type\"";
+        let res: std::result::Result<VolumeType, _> = serde_json::from_str(invalid);
+        assert!(res.is_err());
+    }
 }

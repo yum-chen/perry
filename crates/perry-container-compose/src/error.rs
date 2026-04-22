@@ -130,3 +130,21 @@ mod tests {
         assert_eq!(compose_error_to_js(&err).contains("\"code\":503"), true);
     }
 }
+
+#[cfg(test)]
+mod tests_v2 {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Feature: alloy-container, Property 14: Error propagation preserves code and message
+    proptest! {
+        #[test]
+        fn test_error_code_preservation(code in any::<i32>(), message in ".*") {
+            let err = ComposeError::BackendError { code, message: message.clone() };
+            let json = compose_error_to_js(&err);
+            let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(val["code"], code);
+            assert!(val["message"].as_str().unwrap().contains(&message));
+        }
+    }
+}

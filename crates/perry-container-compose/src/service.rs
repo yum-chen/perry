@@ -1,6 +1,8 @@
 //! Service runtime state and name generation.
 
-use crate::types::ComposeService;
+use crate::backend::ContainerBackend;
+use crate::error::Result;
+use crate::types::{ComposeService, ContainerSpec};
 use md5::{Digest, Md5};
 
 /// Generate a unique container name for a service.
@@ -56,6 +58,72 @@ pub fn service_container_name(svc: &ComposeService, service_name: &str) -> Strin
 
     let image = svc.image.as_deref().unwrap_or(service_name);
     generate_name(image, service_name)
+}
+
+impl ComposeService {
+    /// Check if the service's container exists.
+    pub async fn exists(&self, backend: &dyn ContainerBackend, service_name: &str) -> Result<bool> {
+        let name = service_container_name(self, service_name);
+        match backend.inspect(&name).await {
+            Ok(_) => Ok(true),
+            Err(crate::error::ComposeError::NotFound(_)) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Check if the service's container is running.
+    pub async fn is_running(&self, backend: &dyn ContainerBackend, service_name: &str) -> Result<bool> {
+        let name = service_container_name(self, service_name);
+        match backend.inspect(&name).await {
+            Ok(info) => Ok(info.status == "running"),
+            Err(crate::error::ComposeError::NotFound(_)) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Run the command to create and start the service container.
+    pub async fn run_command(&self, backend: &dyn ContainerBackend, service_name: &str) -> Result<()> {
+        let name = service_container_name(self, service_name);
+        let spec = self.to_container_spec(service_name, Some(&name));
+        backend.run(&spec).await.map(|_| ())
+    }
+
+    /// Start the existing stopped service container.
+    pub async fn start_command(&self, backend: &dyn ContainerBackend, service_name: &str) -> Result<()> {
+        let name = service_container_name(self, service_name);
+        backend.start(&name).await
+    }
+
+    /// Build the image for the service if a build config is provided.
+    pub async fn build_command(&self, backend: &dyn ContainerBackend, service_name: &str) -> Result<()> {
+        if let Some(build) = &self.build {
+            let image_name = self.image_ref(service_name);
+            backend.build(&build.as_build(), &image_name).await
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Create a `ContainerSpec` from this service definition.
+    pub fn to_container_spec(&self, service_name: &str, container_name: Option<&str>) -> ContainerSpec {
+        ContainerSpec {
+            image: self.image_ref(service_name),
+            name: container_name.map(String::from),
+            ports: Some(self.port_strings()),
+            volumes: Some(self.volume_strings()),
+            env: Some(self.resolved_env()),
+            cmd: self.command_list(),
+            entrypoint: self.entrypoint.as_ref().map(|e| match e {
+                serde_yaml::Value::String(s) => vec![s.clone()],
+                serde_yaml::Value::Sequence(seq) => seq.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+                _ => vec![],
+            }),
+            network: self.network_mode.clone(),
+            rm: Some(false),
+            read_only: self.read_only,
+            ..Default::default()
+        }
+    }
 }
 
 #[cfg(test)]
