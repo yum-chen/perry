@@ -22,8 +22,8 @@ pub fn register_container_info_list(_list: Vec<ContainerInfo>) -> u64 {
     NEXT_CONTAINER_HANDLE.fetch_add(1, Ordering::SeqCst)
 }
 
-pub fn register_compose_handle(_handle: ComposeHandle) -> u64 {
-    NEXT_CONTAINER_HANDLE.fetch_add(1, Ordering::SeqCst)
+pub fn register_compose_handle_ffi(handle: ComposeHandle) -> u64 {
+    handle.stack_id
 }
 
 pub fn register_container_logs(_logs: ContainerLogs) -> u64 {

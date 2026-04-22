@@ -1,12 +1,7 @@
 use crate::error::Result;
 use md5::{Digest, Md5};
 
-pub fn service_container_name(service: &crate::types::ComposeService, service_name: &str) -> String {
-    if let Some(name) = service.container_name.as_ref() {
-        return name.clone();
-    }
-
-    let image = service.image.as_deref().unwrap_or("unknown");
+pub fn generate_name(image: &str, service_name: &str) -> String {
     let mut hasher = Md5::new();
     hasher.update(image.as_bytes());
     let hash = hex::encode(hasher.finalize());
