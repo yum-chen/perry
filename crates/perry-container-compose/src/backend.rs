@@ -435,11 +435,46 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
     }
 }
 
+pub async fn probe_all_candidates() -> Vec<BackendProbeResult> {
+    let candidates = platform_candidates();
+    let mut results = Vec::new();
+
+    for candidate in candidates {
+        match tokio::time::timeout(Duration::from_secs(2), probe_candidate_driver(candidate)).await {
+            Ok(Ok(_)) => results.push(BackendProbeResult {
+                name: candidate.to_string(),
+                available: true,
+                reason: String::new(),
+            }),
+            Ok(Err(reason)) => results.push(BackendProbeResult {
+                name: candidate.to_string(),
+                available: false,
+                reason,
+            }),
+            Err(_) => results.push(BackendProbeResult {
+                name: candidate.to_string(),
+                available: false,
+                reason: "probe timed out".into(),
+            }),
+        }
+    }
+    results
+}
+
 pub async fn detect_backend() -> std::result::Result<Box<dyn ContainerBackend>, Vec<BackendProbeResult>> {
     if let Ok(name) = std::env::var("PERRY_CONTAINER_BACKEND") {
-        return probe_candidate(&name).await
-            .map_err(|reason| vec![BackendProbeResult { name: name.clone(), available: false, reason }]);
+        return probe_candidate(&name).await.map_err(|reason| {
+            vec![BackendProbeResult {
+                name: name.clone(),
+                available: false,
+                reason,
+            }]
+        });
     }
+
+    let mode = std::env::var("PERRY_CONTAINER_MODE").unwrap_or_else(|_| "local-first".to_string());
+    // In a real implementation, server-first would prioritize remote sockets.
+    // For now, we follow platform priority.
 
     let candidates = platform_candidates();
     let mut results = Vec::new();
@@ -447,8 +482,16 @@ pub async fn detect_backend() -> std::result::Result<Box<dyn ContainerBackend>, 
     for candidate in candidates {
         match tokio::time::timeout(Duration::from_secs(2), probe_candidate(candidate)).await {
             Ok(Ok(backend)) => return Ok(backend),
-            Ok(Err(reason)) => results.push(BackendProbeResult { name: candidate.to_string(), available: false, reason }),
-            Err(_) => results.push(BackendProbeResult { name: candidate.to_string(), available: false, reason: "probe timed out".into() }),
+            Ok(Err(reason)) => results.push(BackendProbeResult {
+                name: candidate.to_string(),
+                available: false,
+                reason,
+            }),
+            Err(_) => results.push(BackendProbeResult {
+                name: candidate.to_string(),
+                available: false,
+                reason: "probe timed out".into(),
+            }),
         }
     }
     Err(results)

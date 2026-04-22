@@ -702,14 +702,14 @@ pub struct ContainerSpec {
 }
 
 /// Handle returned after creating/running a container.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContainerHandle {
     pub id: String,
     pub name: Option<String>,
 }
 
 /// Information about a running (or stopped) container.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContainerInfo {
     pub id: String,
     pub name: String,
@@ -720,7 +720,7 @@ pub struct ContainerInfo {
 }
 
 /// Logs from a container.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContainerLogs {
     pub stdout: String,
     pub stderr: String,

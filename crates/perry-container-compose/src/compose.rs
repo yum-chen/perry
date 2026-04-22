@@ -77,39 +77,18 @@ impl ComposeEngine {
 
         let mut started = Vec::new();
         for svc_name in target {
-            let svc = self.spec.services.get(svc_name).unwrap();
-            let container_name = service::service_container_name(svc, svc_name);
+            let svc_spec = self.spec.services.get(svc_name).unwrap();
+            let svc = service::Service::new(svc_name.clone(), svc_spec);
 
-            let network = match &svc.networks {
-                Some(crate::types::ServiceNetworks::List(l)) => l.first().cloned(),
-                Some(crate::types::ServiceNetworks::Map(m)) => m.keys().next().cloned(),
-                None => None,
-            };
-
-            let container_spec = ContainerSpec {
-                image: svc.image.clone().unwrap_or_default(),
-                name: Some(container_name.clone()),
-                ports: Some(svc.port_strings()),
-                volumes: Some(svc.volume_strings()),
-                env: Some(svc.resolved_env()),
-                cmd: svc.command_list(),
-                entrypoint: None, // TODO: handle entrypoint
-                network,
-                rm: None,
-                read_only: svc.read_only,
-                seccomp: None,
-                isolation_level: svc.isolation_level.clone(),
-            };
-
-            match self.backend.run(&container_spec).await {
+            match crate::orchestrate::orchestrate_service(&svc, self.backend.as_ref()).await {
                 Ok(_) => {
-                    started.push(container_name);
+                    started.push(svc);
                 }
                 Err(e) => {
                     // Rollback
-                    for name in started.iter().rev() {
-                        let _ = self.backend.stop(name, Some(10)).await;
-                        let _ = self.backend.remove(name, true).await;
+                    for s in started.iter().rev() {
+                        let _ = crate::orchestrate::stop_service(s, self.backend.as_ref()).await;
+                        let _ = crate::orchestrate::remove_service(s, self.backend.as_ref()).await;
                     }
                     return Err(ComposeError::ServiceStartupFailed {
                         service: svc_name.clone(),
@@ -251,6 +230,10 @@ impl ComposeEngine {
     pub async fn restart(&self, services: &[String]) -> Result<()> {
         self.stop(services).await?;
         self.start(services).await
+    }
+
+    pub fn resolve_startup_order(&self) -> Result<Vec<String>> {
+        resolve_startup_order(&self.spec)
     }
 }
 

@@ -4017,6 +4017,10 @@ fn perry_container_compose_table_lookup(method: &str) -> Option<&'static UiSig> 
 // =============================================================================
 
 static PERRY_WORKLOADS_TABLE: &[UiSig] = &[
+    UiSig { method: "graph", runtime: "js_workload_graph",
+            args: &[UiArgKind::Str, UiArgKind::Json], ret: UiReturnKind::Str },
+    UiSig { method: "node", runtime: "js_workload_node",
+            args: &[UiArgKind::Str, UiArgKind::Json], ret: UiReturnKind::Str },
     UiSig { method: "runGraph", runtime: "js_workload_runGraph",
             args: &[UiArgKind::Json], ret: UiReturnKind::Promise },
     UiSig { method: "inspectGraph", runtime: "js_workload_inspectGraph",

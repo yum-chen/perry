@@ -80,7 +80,9 @@ pub fn module_to_features(module: &str) -> &'static [&'static str] {
         // dotenv has no optional dep.
         "dotenv" | "dotenv/config" => &[],
 
-        "perry/container" | "perry/container-compose" => &["container"],
+        "perry/container" | "perry/container-compose" | "perry/compose" | "perry/workloads" => {
+            &["container"]
+        }
 
         // Modules with no optional perry-stdlib dependency (decimal.js,
         // bignumber.js, lru-cache, commander, exponential-backoff, http,

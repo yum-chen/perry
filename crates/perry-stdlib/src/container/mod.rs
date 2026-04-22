@@ -6,6 +6,7 @@ pub mod compose;
 pub mod context;
 pub mod types;
 pub mod verification;
+pub mod workload;
 
 pub(crate) mod mod_priv {
     use super::context::ContainerContext;
@@ -423,18 +424,8 @@ pub unsafe extern "C" fn js_container_getBackend() -> *const StringHeader {
 pub unsafe extern "C" fn js_container_detectBackend() -> *mut Promise {
     let promise = js_promise_new();
     crate::common::spawn_for_promise(promise as *mut u8, async move {
-        match perry_container_compose::backend::detect_backend().await {
-            Ok(backend) => {
-                let info = serde_json::json!([{
-                    "name": backend.backend_name(),
-                    "available": true,
-                }]);
-                Ok(types::register_string(info.to_string()))
-            }
-            Err(probed) => {
-                Ok(types::register_string(serde_json::to_string(&probed).unwrap()))
-            }
-        }
+        let results = perry_container_compose::backend::probe_all_candidates().await;
+        Ok(types::register_string(serde_json::to_string(&results).unwrap()))
     });
     promise
 }
@@ -624,6 +615,39 @@ pub unsafe extern "C" fn js_container_compose_restart(handle_id: u64, services_j
 }
 
 // ============ Workload Graph Functions ============
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_graph(
+    name_ptr: *const StringHeader,
+    spec_json: *const StringHeader,
+) -> *const StringHeader {
+    let name = string_from_header(name_ptr).unwrap_or_default();
+    let spec_str = string_from_header(spec_json).unwrap_or_default();
+    let spec: serde_json::Value = serde_json::from_str(&spec_str).unwrap_or_default();
+
+    let graph = serde_json::json!({
+        "name": name,
+        "nodes": spec["nodes"],
+        "edges": spec["edges"],
+    });
+
+    string_to_js(&graph.to_string())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_node(
+    name_ptr: *const StringHeader,
+    spec_json: *const StringHeader,
+) -> *const StringHeader {
+    let name = string_from_header(name_ptr).unwrap_or_default();
+    let spec_str = string_from_header(spec_json).unwrap_or_default();
+    let mut spec: serde_json::Value = serde_json::from_str(&spec_str).unwrap_or_default();
+
+    spec["name"] = serde_json::Value::String(name.clone());
+    spec["id"] = serde_json::Value::String(name);
+
+    string_to_js(&spec.to_string())
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn js_workload_runGraph(graph_json: *const StringHeader) -> *mut Promise {

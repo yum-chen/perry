@@ -2,14 +2,19 @@
 
 pub mod backend;
 pub mod cli;
+pub mod commands;
 pub mod compose;
 pub mod config;
 pub mod error;
 pub mod installer;
+pub mod orchestrate;
 pub mod project;
 pub mod service;
 pub mod types;
 pub mod yaml;
+
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 // FFI exports (Perry TypeScript integration)
 #[cfg(feature = "ffi")]
