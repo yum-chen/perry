@@ -70,14 +70,15 @@ async fn test_compose_down_cleans_resources() {
     let mut spec = ComposeSpec::default();
     spec.services.insert("web".into(), ComposeService {
         image: Some("nginx".into()),
+        container_name: Some("web-manual".into()),
         ..Default::default()
     });
 
     let backend = Arc::new(MockBackend::default());
     let engine = ComposeEngine::new(spec, "down-project".into(), backend.clone());
 
-    let handle = engine.up(&[], true, false, false).await.unwrap();
-    engine.down(&handle.services, false, true).await.expect("down failed");
+    let _handle = engine.up(&[], true, false, false).await.unwrap();
+    engine.down(&[], false, true).await.expect("down failed");
 
     let state = backend.state.lock().unwrap();
     assert!(state.containers.is_empty(), "Containers should be empty, but found: {:?}", state.containers);

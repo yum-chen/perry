@@ -24,7 +24,7 @@ pub fn generate_name(image: &str, service_name: &str) -> String {
         .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
         .collect();
 
-    format!("{}_{}{:08x}", safe_name, short_hash, random_suffix)
+    format!("{}-{}-{:08x}", safe_name, short_hash, random_suffix)
 }
 
 /// Service runtime state tracking.
@@ -65,10 +65,11 @@ mod tests {
     #[test]
     fn test_generate_name_format() {
         let name = generate_name("nginx:latest", "web");
-        // Format: {safe_name}_{short_hash}{random_suffix_hex}
-        let parts: Vec<&str> = name.split('_').collect();
+        // Format: {safe_name}-{short_hash}-{random_suffix_hex}
+        let parts: Vec<&str> = name.split('-').collect();
         assert_eq!(parts[0], "web");
-        assert_eq!(parts[1].len(), 16); // 8 hash + 8 random
+        assert_eq!(parts[1].len(), 8); // 8 hash
+        assert_eq!(parts[2].len(), 8); // 8 random
     }
 
     #[test]
@@ -76,8 +77,8 @@ mod tests {
         let name1 = generate_name("nginx:latest", "web");
         let name2 = generate_name("nginx:latest", "api");
         // Same image → same hash prefix
-        let hash1 = &name1[name1.find('_').unwrap() + 1..name1.find('_').unwrap() + 9];
-        let hash2 = &name2[name2.find('_').unwrap() + 1..name2.find('_').unwrap() + 9];
+        let hash1 = &name1[name1.find('-').unwrap() + 1..name1.find('-').unwrap() + 9];
+        let hash2 = &name2[name2.find('-').unwrap() + 1..name2.find('-').unwrap() + 9];
         assert_eq!(hash1, hash2, "same image must produce same hash prefix");
     }
 
@@ -92,6 +93,6 @@ mod tests {
     #[test]
     fn test_sanitize_service_name() {
         let name = generate_name("img", "my.service");
-        assert!(name.starts_with("my_service_"), "dots should be replaced");
+        assert!(name.starts_with("my_service-"), "dots should be replaced");
     }
 }

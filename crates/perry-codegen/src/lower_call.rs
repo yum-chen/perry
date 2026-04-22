@@ -3881,8 +3881,8 @@ static PERRY_CONTAINER_TABLE: &[UiSig] = &[
     UiSig { method: "run", runtime: "js_container_run", args: &[UiArgKind::Str], ret: UiReturnKind::Widget },
     UiSig { method: "create", runtime: "js_container_create", args: &[UiArgKind::Str], ret: UiReturnKind::Widget },
     UiSig { method: "start", runtime: "js_container_start", args: &[UiArgKind::Str], ret: UiReturnKind::Widget },
-    UiSig { method: "stop", runtime: "js_container_stop", args: &[UiArgKind::Str, UiArgKind::I64Raw], ret: UiReturnKind::Widget },
-    UiSig { method: "remove", runtime: "js_container_remove", args: &[UiArgKind::Str, UiArgKind::I64Raw], ret: UiReturnKind::Widget },
+    UiSig { method: "stop", runtime: "js_container_stop", args: &[UiArgKind::Str, UiArgKind::Str], ret: UiReturnKind::Widget },
+    UiSig { method: "remove", runtime: "js_container_remove", args: &[UiArgKind::Str, UiArgKind::Str], ret: UiReturnKind::Widget },
     UiSig { method: "list", runtime: "js_container_list", args: &[UiArgKind::Str], ret: UiReturnKind::Widget },
     UiSig { method: "inspect", runtime: "js_container_inspect", args: &[UiArgKind::Str], ret: UiReturnKind::Widget },
     UiSig { method: "logs", runtime: "js_container_logs", args: &[UiArgKind::Str, UiArgKind::Str], ret: UiReturnKind::Widget },
@@ -3898,15 +3898,15 @@ static PERRY_CONTAINER_TABLE: &[UiSig] = &[
 
 /// Dispatch table for perry/compose module.
 static PERRY_COMPOSE_TABLE: &[UiSig] = &[
-    UiSig { method: "up", runtime: "js_compose_up", args: &[UiArgKind::Str], ret: UiReturnKind::Widget },
-    UiSig { method: "down", runtime: "js_compose_down", args: &[UiArgKind::I64Raw, UiArgKind::I64Raw], ret: UiReturnKind::Widget },
-    UiSig { method: "ps", runtime: "js_compose_ps", args: &[UiArgKind::I64Raw], ret: UiReturnKind::Widget },
-    UiSig { method: "logs", runtime: "js_compose_logs", args: &[UiArgKind::I64Raw, UiArgKind::Str, UiArgKind::I64Raw], ret: UiReturnKind::Widget },
-    UiSig { method: "exec", runtime: "js_compose_exec", args: &[UiArgKind::I64Raw, UiArgKind::Str, UiArgKind::Str], ret: UiReturnKind::Widget },
-    UiSig { method: "config", runtime: "js_compose_config", args: &[UiArgKind::I64Raw], ret: UiReturnKind::Widget },
-    UiSig { method: "start", runtime: "js_compose_start", args: &[UiArgKind::I64Raw, UiArgKind::Str], ret: UiReturnKind::Widget },
-    UiSig { method: "stop", runtime: "js_compose_stop", args: &[UiArgKind::I64Raw, UiArgKind::Str], ret: UiReturnKind::Widget },
-    UiSig { method: "restart", runtime: "js_compose_restart", args: &[UiArgKind::I64Raw, UiArgKind::Str], ret: UiReturnKind::Widget },
+    UiSig { method: "up", runtime: "js_container_composeUp", args: &[UiArgKind::Str], ret: UiReturnKind::Widget },
+    UiSig { method: "down", runtime: "js_container_compose_down", args: &[UiArgKind::I64Raw, UiArgKind::I64Raw], ret: UiReturnKind::Widget },
+    UiSig { method: "ps", runtime: "js_container_compose_ps", args: &[UiArgKind::I64Raw], ret: UiReturnKind::Widget },
+    UiSig { method: "logs", runtime: "js_container_compose_logs", args: &[UiArgKind::I64Raw, UiArgKind::Str], ret: UiReturnKind::Widget },
+    UiSig { method: "exec", runtime: "js_container_compose_exec", args: &[UiArgKind::I64Raw, UiArgKind::Str, UiArgKind::Str, UiArgKind::Str], ret: UiReturnKind::Widget },
+    UiSig { method: "config", runtime: "js_container_compose_config", args: &[UiArgKind::I64Raw], ret: UiReturnKind::Widget },
+    UiSig { method: "start", runtime: "js_container_compose_start", args: &[UiArgKind::I64Raw, UiArgKind::Str], ret: UiReturnKind::Widget },
+    UiSig { method: "stop", runtime: "js_container_compose_stop", args: &[UiArgKind::I64Raw, UiArgKind::Str], ret: UiReturnKind::Widget },
+    UiSig { method: "restart", runtime: "js_container_compose_restart", args: &[UiArgKind::I64Raw, UiArgKind::Str], ret: UiReturnKind::Widget },
 ];
 
 /// Dispatch table for perry/workloads module.

@@ -109,6 +109,15 @@ impl ContainerBackend for MockBackend {
     }
 
     async fn pull_image(&self, _reference: &str) -> Result<()> { Ok(()) }
+    async fn inspect_image(&self, reference: &str) -> Result<ImageInfo> {
+        Ok(ImageInfo {
+            id: format!("sha256:{}", reference),
+            repository: reference.to_string(),
+            tag: "latest".to_string(),
+            size: 100,
+            created: "2025-01-01T00:00:00Z".to_string(),
+        })
+    }
     async fn list_images(&self) -> Result<Vec<ImageInfo>> { Ok(vec![]) }
     async fn remove_image(&self, _reference: &str, _force: bool) -> Result<()> { Ok(()) }
 
