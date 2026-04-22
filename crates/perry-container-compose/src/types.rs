@@ -681,6 +681,34 @@ pub struct ComposeHandle {
     pub services: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceGraph {
+    pub nodes: Vec<String>,
+    pub edges: Vec<ServiceEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceEdge {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackStatus {
+    pub services: Vec<ServiceStatus>,
+    pub healthy: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStatus {
+    pub service: String,
+    pub state: String, // "running" | "stopped" | "failed" | "pending" | "unknown"
+    pub container_id: Option<String>,
+    pub error: Option<String>,
+}
+
 // ============ Container types (for single-container API) ============
 
 /// Specification for running a single container.

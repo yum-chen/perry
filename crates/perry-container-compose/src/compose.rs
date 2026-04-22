@@ -628,3 +628,56 @@ impl WorkloadGraphEngine {
         Ok(handle.stack_id)
     }
 }
+
+impl ComposeEngine {
+    pub async fn status(&self) -> Result<crate::types::StackStatus> {
+        let mut services = Vec::new();
+        let mut all_running = true;
+
+        for (svc_name, svc) in &self.spec.services {
+            let container_name = service::service_container_name(svc, svc_name);
+            let (state, container_id, error) = match self.backend.inspect(&container_name).await {
+                Ok(info) => {
+                    if info.status != "running" {
+                        all_running = false;
+                    }
+                    (info.status, Some(info.id), None)
+                }
+                Err(e) => {
+                    all_running = false;
+                    ("unknown".to_string(), None, Some(e.to_string()))
+                }
+            };
+
+            services.push(crate::types::ServiceStatus {
+                service: svc_name.clone(),
+                state,
+                container_id,
+                error,
+            });
+        }
+
+        Ok(crate::types::StackStatus {
+            services,
+            healthy: all_running,
+        })
+    }
+
+    pub fn graph(&self) -> Result<crate::types::ServiceGraph> {
+        let nodes = resolve_startup_order(&self.spec)?;
+        let mut edges = Vec::new();
+
+        for (name, svc) in &self.spec.services {
+            if let Some(deps) = &svc.depends_on {
+                for dep in deps.service_names() {
+                    edges.push(crate::types::ServiceEdge {
+                        from: name.clone(),
+                        to: dep,
+                    });
+                }
+            }
+        }
+
+        Ok(crate::types::ServiceGraph { nodes, edges })
+    }
+}
