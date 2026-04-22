@@ -2,25 +2,26 @@ use perry_container_compose::service::generate_name;
 
 #[test]
 fn test_generate_name_format() {
-    let name = generate_name("image: nginx");
-    // Format: {md5_8chars}-{random_hex}
-    let parts: Vec<&str> = name.split('-').collect();
-    assert_eq!(parts.len(), 2);
-    assert_eq!(parts[0].len(), 8);
-    assert_eq!(parts[1].len(), 8);
+    let name = generate_name("web", "nginx");
+    // Format: {short_hash}{random_suffix_hex}
+    assert_eq!(name.len(), 8 + 8);
 }
 
 #[test]
-fn test_generate_name_stable_per_yaml() {
-    let name1 = generate_name("image: nginx");
-    let name2 = generate_name("image: nginx");
-    // Prefix is md5 hash, so same input → same prefix
-    assert_eq!(name1.split('-').next().unwrap(), name2.split('-').next().unwrap());
+fn test_generate_name_stable_per_image() {
+    let name1 = generate_name("web", "nginx");
+    let name2 = generate_name("api", "nginx");
+    // short_hash is MD5(image)
+    let hash1 = &name1[0..8];
+    let hash2 = &name2[0..8];
+    assert_eq!(hash1, hash2);
 }
 
 #[test]
-fn test_generate_name_different_per_yaml() {
-    let name1 = generate_name("image: nginx");
-    let name2 = generate_name("image: redis");
-    assert_ne!(name1.split('-').next().unwrap(), name2.split('-').next().unwrap());
+fn test_generate_name_different_per_image() {
+    let name1 = generate_name("web", "nginx");
+    let name2 = generate_name("web", "redis");
+    let hash1 = &name1[0..8];
+    let hash2 = &name2[0..8];
+    assert_ne!(hash1, hash2);
 }

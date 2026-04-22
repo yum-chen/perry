@@ -2,19 +2,28 @@
 //!
 //! Defines the canonical `ComposeError` enum and FFI error mapping.
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use crate::backend::BackendProbeResult;
-use serde::{Serialize, Deserialize};
+
+/// Result of probing a single container backend candidate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackendProbeResult {
+    pub name: String,
+    pub available: bool,
+    pub reason: String,
+}
 
 /// Top-level crate error
-#[derive(Debug, Error, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Error)]
 pub enum ComposeError {
     #[error("Dependency cycle detected in services: {services:?}")]
     DependencyCycle { services: Vec<String> },
 
     #[error("Service '{service}' failed to start: {message}")]
     ServiceStartupFailed { service: String, message: String },
+
+    #[error("Image pull failed: {message}")]
+    ImagePullFailed { message: String },
 
     #[error("Backend error (exit {code}): {message}")]
     BackendError { code: i32, message: String },
@@ -23,15 +32,12 @@ pub enum ComposeError {
     NotFound(String),
 
     #[error("Parse error: {0}")]
-    #[serde(serialize_with = "serialize_error", skip_deserializing)]
     ParseError(#[from] serde_yaml::Error),
 
     #[error("JSON error: {0}")]
-    #[serde(serialize_with = "serialize_error", skip_deserializing)]
     JsonError(#[from] serde_json::Error),
 
     #[error("I/O error: {0}")]
-    #[serde(serialize_with = "serialize_error", skip_deserializing)]
     IoError(#[from] std::io::Error),
 
     #[error("Validation error: {message}")]
@@ -46,16 +52,8 @@ pub enum ComposeError {
     #[error("No container backend found. Probed: {probed:?}")]
     NoBackendFound { probed: Vec<BackendProbeResult> },
 
-    #[error("Specified backend '{name}' is not available: {reason}")]
+    #[error("Backend '{name}' is not available: {reason}")]
     BackendNotAvailable { name: String, reason: String },
-}
-
-fn serialize_error<S, E>(e: &E, s: S) -> std::result::Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-    E: std::fmt::Display,
-{
-    s.serialize_str(&e.to_string())
 }
 
 impl ComposeError {
@@ -82,7 +80,9 @@ pub fn compose_error_to_js(e: &ComposeError) -> String {
         ComposeError::VerificationFailed { .. } => 403,
         ComposeError::NoBackendFound { .. } => 503,
         ComposeError::BackendNotAvailable { .. } => 503,
-        _ => 500,
+        ComposeError::ServiceStartupFailed { .. } => 500,
+        ComposeError::ImagePullFailed { .. } => 500,
+        ComposeError::IoError(_) => 500,
     };
     serde_json::json!({
         "message": e.to_string(),
@@ -141,7 +141,7 @@ mod tests_v2 {
     use super::*;
     use proptest::prelude::*;
 
-    // Feature: perry-container, Property 14: Error propagation preserves code and message
+    // Feature: alloy-container, Property 14: Error propagation preserves code and message
     proptest! {
         #[test]
         fn test_error_code_preservation(code in any::<i32>(), message in ".*") {

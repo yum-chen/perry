@@ -1,21 +1,31 @@
-use crate::compose::ComposeEngine;
-use crate::error::{ComposeError, Result};
-use crate::project::ComposeProject;
-use crate::config::ProjectConfig;
-use clap::{Args, Parser, Subcommand};
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
+//! CLI entry point for `perry-compose` binary.
+//!
+//! clap-based CLI with all subcommands.
 
+use crate::compose::ComposeEngine;
+use crate::error::Result;
+use crate::project::ComposeProject;
+use clap::{Args, Parser, Subcommand};
+use std::path::PathBuf;
+
+/// perry-compose: Docker Compose-like experience for Apple Container / Podman
 #[derive(Parser, Debug)]
-#[command(name = "perry-compose", version, about = "Docker Compose-like CLI for container backends")]
+#[command(
+    name = "perry-compose",
+    version,
+    about = "Docker Compose-like CLI for container backends, powered by Perry",
+    long_about = None
+)]
 pub struct Cli {
+    /// Path to compose file(s)
     #[arg(short = 'f', long = "file", value_name = "FILE", global = true)]
     pub files: Vec<PathBuf>,
 
+    /// Project name (default: directory name)
     #[arg(short = 'p', long = "project-name", global = true)]
     pub project_name: Option<String>,
 
+    /// Environment file(s)
     #[arg(long = "env-file", value_name = "FILE", global = true)]
     pub env_files: Vec<PathBuf>,
 
@@ -41,7 +51,7 @@ pub enum Commands {
     Logs(LogsArgs),
     /// Execute a command in a running service
     Exec(ExecArgs),
-    /// Validate and view the Compose configuration
+    /// Validate and view the Compose file
     Config(ConfigArgs),
 }
 
@@ -79,7 +89,7 @@ pub struct PsArgs {
 
 #[derive(Args, Debug)]
 pub struct LogsArgs {
-    #[arg(short = 'f', long = "follow")]
+    #[arg(long = "follow")]
     pub follow: bool,
     #[arg(long = "tail")]
     pub tail: Option<u32>,
@@ -91,7 +101,6 @@ pub struct LogsArgs {
 #[derive(Args, Debug)]
 pub struct ExecArgs {
     pub service: String,
-    #[arg(trailing_var_arg = true)]
     pub cmd: Vec<String>,
     #[arg(short = 'u', long = "user")]
     pub user: Option<String>,
@@ -109,68 +118,111 @@ pub struct ConfigArgs {
     pub resolve: bool,
 }
 
+// ============ Command dispatch ============
+
 pub async fn run(cli: Cli) -> Result<()> {
-    let config = ProjectConfig::new(
+    let config = crate::config::ProjectConfig::new(
         cli.files.clone(),
         cli.project_name.clone(),
         cli.env_files.clone(),
     );
-
     let project = ComposeProject::load(&config)?;
-
-    let backend = crate::backend::detect_backend().await?;
-    let backend = Arc::from(backend);
-
-    let engine = ComposeEngine::new(project.spec.clone(), project.project_name.clone(), backend);
+    let backend = crate::backend::detect_backend()
+        .await
+        .map_err(|probed| crate::error::ComposeError::NoBackendFound { probed })?;
+    let engine = std::sync::Arc::new(ComposeEngine::new(project.spec.clone(), project.project_name.clone(), backend));
 
     match cli.command {
         Commands::Up(args) => {
-            engine.up(&args.services, args.detach, args.build, args.remove_orphans).await?;
+            engine
+                .up(&args.services, args.detach, args.build, args.remove_orphans)
+                .await?;
         }
+
         Commands::Down(args) => {
-            engine.down(&args.services, args.remove_orphans, args.volumes).await?;
+            engine
+                .down(&args.services, args.remove_orphans, args.volumes)
+                .await?;
         }
+
         Commands::Start(args) => {
             engine.start(&args.services).await?;
         }
+
         Commands::Stop(args) => {
             engine.stop(&args.services).await?;
         }
+
         Commands::Restart(args) => {
             engine.restart(&args.services).await?;
         }
+
         Commands::Ps(_args) => {
             let infos = engine.ps().await?;
             print_ps_table(&infos);
         }
+
         Commands::Logs(args) => {
             let logs_map = engine.logs(&args.services, args.tail).await?;
+
             let mut names: Vec<&String> = logs_map.keys().collect();
             names.sort();
             for name in names {
                 let log = &logs_map[name];
-                for line in log.lines() {
-                    println!("{:<12} | {}", name, line);
+                if !log.stdout.is_empty() {
+                    for line in log.stdout.lines() {
+                        println!("{} | {}", name, line);
+                    }
+                }
+                if !log.stderr.is_empty() {
+                    for line in log.stderr.lines() {
+                        eprintln!("{} | {}", name, line);
+                    }
                 }
             }
         }
+
         Commands::Exec(args) => {
-            let mut env_map = HashMap::new();
-            for e in args.env {
-                if let Some((k, v)) = e.split_once('=') {
-                    env_map.insert(k.to_string(), v.to_string());
-                }
-            }
-            let env = if env_map.is_empty() { None } else { Some(env_map) };
-            let logs = engine.exec(&args.service, &args.cmd, env.as_ref(), args.workdir.as_deref()).await?;
-            print!("{}", logs.stdout);
-            eprint!("{}", logs.stderr);
+            let env: std::collections::HashMap<String, String> = args
+                .env
+                .iter()
+                .filter_map(|e| {
+                    let mut parts = e.splitn(2, '=');
+                    let k = parts.next()?.to_owned();
+                    let v = parts.next().unwrap_or("").to_owned();
+                    Some((k, v))
+                })
+                .collect();
+
+            let cmd = args.cmd.clone();
+
+            let svc = engine
+                .spec
+                .services
+                .get(&args.service)
+                .ok_or_else(|| crate::error::ComposeError::NotFound(args.service.clone()))?;
+            let container_name = crate::service::service_container_name(svc, &args.service);
+
+            let result = engine
+                .backend
+                .exec(
+                    &container_name,
+                    &cmd,
+                    if env.is_empty() { None } else { Some(&env) },
+                    args.workdir.as_deref(),
+                )
+                .await?;
+
+            print!("{}", result.stdout);
+            eprint!("{}", result.stderr);
         }
+
         Commands::Config(args) => {
             let yaml = engine.config()?;
             if args.format == "json" {
                 let value: serde_yaml::Value = serde_yaml::from_str(&yaml)?;
-                println!("{}", serde_json::to_string_pretty(&value)?);
+                let json = serde_json::to_string_pretty(&value)?;
+                println!("{}", json);
             } else {
                 println!("{}", yaml);
             }
@@ -181,9 +233,31 @@ pub async fn run(cli: Cli) -> Result<()> {
 }
 
 fn print_ps_table(infos: &[crate::types::ContainerInfo]) {
-    println!("{:<24}  {:<12}  {:<36}", "SERVICE", "STATUS", "CONTAINER");
-    println!("{}", "-".repeat(76));
+    let col_w_svc = 24usize;
+    let col_w_status = 12usize;
+    let col_w_container = 36usize;
+
+    println!(
+        "{:<col_w_svc$}  {:<col_w_status$}  {:<col_w_container$}",
+        "SERVICE", "STATUS", "CONTAINER",
+        col_w_svc = col_w_svc,
+        col_w_status = col_w_status,
+        col_w_container = col_w_container,
+    );
+    println!(
+        "{}",
+        "-".repeat(col_w_svc + col_w_status + col_w_container + 4)
+    );
+
     for info in infos {
-        println!("{:<24}  {:<12}  {:<36}", info.name, info.status, info.id);
+        println!(
+            "{:<col_w_svc$}  {:<col_w_status$}  {:<col_w_container$}",
+            info.name,
+            info.status,
+            info.id,
+            col_w_svc = col_w_svc,
+            col_w_status = col_w_status,
+            col_w_container = col_w_container,
+        );
     }
 }
