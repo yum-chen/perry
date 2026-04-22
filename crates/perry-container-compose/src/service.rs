@@ -1,32 +1,20 @@
 use md5::{Digest, Md5};
 
-pub fn generate_name(project_name: &str, service_name: &str, service: &crate::types::ComposeService) -> crate::error::Result<String> {
-    if let Some(name) = service.container_name.as_ref() {
-        return Ok(name.clone());
-    }
-
-    // Serialize the entire service config to YAML for a stable, config-based hash.
-    let yaml = serde_yaml::to_string(service)
-        .map_err(|e| crate::error::ComposeError::ParseError(e))?;
-
+/// Generate a unique container name following SPEC.md 4.8.
+/// service::generate_name(image, service_name) -> MD5(image)[0..8] + random u32 suffix.
+pub fn generate_name(image: &str, service_name: &str) -> String {
     let mut hasher = Md5::new();
-    hasher.update(yaml.as_bytes());
+    hasher.update(image.as_bytes());
     let hash = hasher.finalize();
     let hash_str = hex::encode(hash);
 
-    // Use the first 8 chars of the hash as a stable, human-readable suffix
+    // Use the first 8 chars of the hash
     let short_hash = &hash_str[..8];
 
-    // Random suffix for uniqueness across multiple instances
+    // Random suffix for uniqueness
     let random_suffix: u32 = rand::random();
 
-    // Use project_name and service_name as prefix for better identification
-    let safe_service_name: String = service_name
-        .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
-        .collect();
-
-    Ok(format!("{}-{}-{}-{:08x}", project_name, safe_service_name, short_hash, random_suffix))
+    format!("{}-{}-{:08x}", service_name, short_hash, random_suffix)
 }
 
 pub fn needs_build(service: &crate::types::ComposeService) -> bool {

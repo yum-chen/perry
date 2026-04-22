@@ -88,7 +88,8 @@ impl ComposeEngine {
         if let Some(networks) = &self.spec.networks {
             for (name, config) in networks {
                 let config = config.clone().unwrap_or_default();
-                if let Err(e) = self.backend.create_network(name, &config).await {
+                let network_config = config.into();
+                if let Err(e) = self.backend.create_network(name, &network_config).await {
                     self.rollback(&started_containers, &created_networks, &created_volumes).await;
                     return Err(e);
                 }
@@ -99,7 +100,8 @@ impl ComposeEngine {
         if let Some(volumes) = &self.spec.volumes {
             for (name, config) in volumes {
                 let config = config.clone().unwrap_or_default();
-                if let Err(e) = self.backend.create_volume(name, &config).await {
+                let volume_config = config.into();
+                if let Err(e) = self.backend.create_volume(name, &volume_config).await {
                     self.rollback(&started_containers, &created_networks, &created_volumes).await;
                     return Err(e);
                 }
@@ -112,7 +114,7 @@ impl ComposeEngine {
             let image = service.image.clone().unwrap_or_default();
             let container_spec = ContainerSpec {
                 image: image.clone(),
-                name: Some(generate_name(&self.project_name, &service_name, service)?),
+                name: Some(generate_name(&image, &service_name)),
                 ports: service.ports.as_ref().map(|p| p.iter().map(|ps| format!("{:?}", ps)).collect()),
                 volumes: service.volumes.as_ref().map(|v| v.iter().map(|vs| format!("{:?}", vs)).collect()),
                 env: match &service.environment {

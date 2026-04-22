@@ -409,6 +409,40 @@ pub struct ContainerSpec {
     pub read_only: Option<bool>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct NetworkConfig {
+    pub driver: Option<String>,
+    pub labels: std::collections::HashMap<String, String>,
+    pub internal: bool,
+    pub enable_ipv6: bool,
+}
+
+impl From<ComposeNetwork> for NetworkConfig {
+    fn from(cn: ComposeNetwork) -> Self {
+        Self {
+            driver: cn.driver,
+            labels: cn.labels.map(|l| l.to_map()).unwrap_or_default(),
+            internal: cn.internal.unwrap_or(false),
+            enable_ipv6: cn.enable_ipv6.unwrap_or(false),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct VolumeConfig {
+    pub driver: Option<String>,
+    pub labels: std::collections::HashMap<String, String>,
+}
+
+impl From<ComposeVolume> for VolumeConfig {
+    fn from(cv: ComposeVolume) -> Self {
+        Self {
+            driver: cv.driver,
+            labels: cv.labels.map(|l| l.to_map()).unwrap_or_default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContainerHandle { pub id: String, pub name: Option<String> }
 
