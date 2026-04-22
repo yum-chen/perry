@@ -680,3 +680,8 @@ pub unsafe extern "C" fn js_workload_handle_exec(handle_id: f64, node_ptr: *cons
 pub unsafe extern "C" fn js_workload_handle_ps(handle_id: f64) -> *mut Promise {
     js_container_compose_ps(handle_id)
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn js_container_module_init() {
+    // Initialise the container module
+}
