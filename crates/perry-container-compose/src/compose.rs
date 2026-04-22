@@ -15,6 +15,7 @@ use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use serde::{Serialize, Deserialize};
 
 /// Global registry of running compose engines, keyed by stack ID.
 static COMPOSE_ENGINES: once_cell::sync::Lazy<std::sync::Mutex<IndexMap<u64, Arc<ComposeEngine>>>> =
@@ -22,6 +23,35 @@ static COMPOSE_ENGINES: once_cell::sync::Lazy<std::sync::Mutex<IndexMap<u64, Arc
 
 /// Next available stack ID
 static NEXT_STACK_ID: AtomicU64 = AtomicU64::new(1);
+
+/// The resolved dependency graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceGraph {
+    pub nodes: Vec<String>,
+    pub edges: Vec<ServiceEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceEdge {
+    pub from: String,
+    pub to: String,
+}
+
+/// Status of a compose stack.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StackStatus {
+    pub services: Vec<ServiceStatus>,
+    pub healthy: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStatus {
+    pub service: String,
+    pub state: String,
+    pub container_id: Option<String>,
+    pub error: Option<String>,
+}
 
 /// The compose orchestration engine.
 pub struct ComposeEngine {
@@ -75,6 +105,11 @@ impl ComposeEngine {
     /// Remove an engine from the registry.
     pub fn unregister(stack_id: u64) {
         COMPOSE_ENGINES.lock().unwrap().shift_remove(&stack_id);
+    }
+
+    /// Method delegate for test compatibility.
+    pub fn resolve_startup_order(&self) -> Result<Vec<String>> {
+        resolve_startup_order(&self.spec)
     }
 
     // ============ up / start ============
@@ -416,16 +451,16 @@ impl ComposeEngine {
     /// Get logs from services.
     pub async fn logs(
         &self,
-        service: Option<&str>,
+        services: &[String],
         tail: Option<u32>,
     ) -> Result<ContainerLogs> {
         let mut stdout = String::new();
         let mut stderr = String::new();
 
-        let service_names: Vec<String> = if let Some(s) = service {
-            vec![s.to_string()]
-        } else {
+        let service_names: Vec<String> = if services.is_empty() {
             self.spec.services.keys().cloned().collect()
+        } else {
+            services.to_vec()
         };
 
         for svc_name in service_names {
@@ -515,6 +550,42 @@ impl ComposeEngine {
     pub async fn restart(&self, services: &[String]) -> Result<()> {
         self.stop(services).await?;
         self.start(services).await
+    }
+
+    pub fn graph(&self) -> Result<ServiceGraph> {
+        let order = resolve_startup_order(&self.spec)?;
+        let mut edges = Vec::new();
+        for (name, svc) in &self.spec.services {
+            if let Some(deps) = &svc.depends_on {
+                for dep in deps.service_names() {
+                    edges.push(ServiceEdge { from: name.clone(), to: dep });
+                }
+            }
+        }
+        Ok(ServiceGraph { nodes: order, edges })
+    }
+
+    pub async fn status(&self) -> Result<StackStatus> {
+        let mut services = Vec::new();
+        let mut healthy = true;
+        for svc_name in self.spec.services.keys() {
+            let container_info = self.find_container_for_service(svc_name).await?;
+            let (state, container_id) = match container_info {
+                Some(info) => {
+                    let st = info.status.clone();
+                    if !st.contains("running") && !st.contains("Up") { healthy = false; }
+                    (st, Some(info.id))
+                }
+                None => { healthy = false; ("not found".into(), None) }
+            };
+            services.push(ServiceStatus {
+                service: svc_name.clone(),
+                state,
+                container_id,
+                error: None,
+            });
+        }
+        Ok(StackStatus { services, healthy })
     }
 }
 
@@ -678,5 +749,54 @@ mod tests {
         let compose = make_compose(&[("c", &[]), ("a", &[]), ("b", &[])]);
         let order = resolve_startup_order(&compose).unwrap();
         assert_eq!(order, vec!["a", "b", "c"]);
+    }
+}
+
+#[cfg(test)]
+mod prop_tests {
+    use super::*;
+
+    // Feature: alloy-container, Property 7: Topological sort produces valid ordering
+    #[test]
+    fn test_topological_sort_validity() {
+        let mut spec = ComposeSpec::default();
+        let svc_a = crate::types::ComposeService::default();
+        let mut svc_b = crate::types::ComposeService::default();
+        svc_b.depends_on = Some(crate::types::DependsOnSpec::List(vec!["a".into()]));
+        spec.services.insert("a".into(), svc_a);
+        spec.services.insert("b".into(), svc_b);
+
+        let order = resolve_startup_order(&spec).unwrap();
+        assert_eq!(order, vec!["a", "b"]);
+    }
+
+    // Feature: alloy-container, Property 8: Cycle detection is exhaustive
+    #[test]
+    fn test_cycle_detection_exhaustive() {
+        let mut spec = ComposeSpec::default();
+        let mut svc_a = crate::types::ComposeService::default();
+        svc_a.depends_on = Some(crate::types::DependsOnSpec::List(vec!["b".into()]));
+        let mut svc_b = crate::types::ComposeService::default();
+        svc_b.depends_on = Some(crate::types::DependsOnSpec::List(vec!["a".into()]));
+        spec.services.insert("a".into(), svc_a);
+        spec.services.insert("b".into(), svc_b);
+
+        let result = resolve_startup_order(&spec);
+        assert!(result.is_err());
+        if let Err(ComposeError::DependencyCycle { services }) = result {
+            assert!(services.contains(&"a".into()));
+            assert!(services.contains(&"b".into()));
+        } else {
+            panic!("Expected DependencyCycle error");
+        }
+    }
+
+    // Feature: alloy-container, Property 9: Container name generation uniqueness
+    #[test]
+    fn test_container_name_uniqueness() {
+        let svc = crate::types::ComposeService::default();
+        let name1 = service::service_container_name(&svc, "svc1");
+        let name2 = service::service_container_name(&svc, "svc2");
+        assert_ne!(name1, name2);
     }
 }

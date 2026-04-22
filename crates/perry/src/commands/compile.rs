@@ -2211,7 +2211,11 @@ fn collect_modules(
                 // panic = "unwind" when this is set.
                 ctx.needs_thread = true;
             }
-            if import.source == "perry/container" || import.source == "perry/compose" {
+            if import.source == "perry/container"
+                || import.source == "perry/container-compose"
+                || import.source == "perry/compose"
+                || import.source == "perry/workloads"
+            {
                 ctx.needs_stdlib = true;
                 ctx.uses_container = true;
             }

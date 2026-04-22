@@ -1,9 +1,10 @@
 //! OCI isolation for Shell capabilities.
 
 use std::collections::HashMap;
-use crate::container::types::{ContainerSpec, ContainerLogs};
+use crate::container::types::{ContainerLogs};
 use crate::container::verification;
-use crate::container::mod_private::get_global_backend_instance;
+use crate::container::context::ContainerContext;
+use perry_container_compose::types::ContainerSpec;
 
 pub struct CapabilityGrants {
     pub network: bool,
@@ -25,29 +26,25 @@ pub async fn alloy_container_run_capability(
         name: Some(format!("alloy-cap-{}-{}", name, rand::random::<u32>())),
         network: if grants.network { None } else { Some("none".to_string()) },
         rm: Some(true),
-        read_only: Some(true),
         env: grants.env.clone(),
         cmd: Some(cmd.iter().map(|s| s.to_string()).collect()),
         ..Default::default()
     };
 
     // 3. Run
-    let backend = get_global_backend_instance().await.map_err(|e| e.to_string())?;
-    let handle = backend.run(&perry_container_compose::types::ContainerSpec {
-        image: spec.image,
-        name: spec.name,
-        ports: spec.ports,
-        volumes: spec.volumes,
-        env: spec.env,
-        cmd: spec.cmd,
-        entrypoint: spec.entrypoint,
-        network: spec.network,
-        rm: spec.rm,
-        read_only: spec.read_only,
-    }).await.map_err(|e| e.to_string())?;
+    let backend = ContainerContext::global().get_backend().await.map_err(|e| e.to_string())?;
 
-    // 4. Logs (simplified: wait for completion should be here)
-    let logs = backend.logs(&handle.id, None).await.map_err(|e| e.to_string())?;
+    // Create security profile for sandboxed capability
+    let profile = crate::container::backend::SecurityProfile {
+        read_only_rootfs: true,
+        seccomp_profile: None, // Use default
+        cap_drop: vec!["ALL".to_string()],
+    };
+
+    let handle = backend.run_with_security(&spec, &profile).await.map_err(|e| e.to_string())?;
+
+    // 4. Wait for exit and collect logs
+    let logs = backend.wait_and_logs(&handle.id).await.map_err(|e| e.to_string())?;
 
     Ok(ContainerLogs {
         stdout: logs.stdout,

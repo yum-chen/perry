@@ -2228,6 +2228,39 @@ pub(crate) fn lower_native_method_call(
         }
     }
 
+    if module == "perry/container" && object.is_none() {
+        if let Some((_, ffi)) = PERRY_CONTAINER_TABLE.iter().find(|(m, _)| *m == method) {
+            let callee = Expr::ExternFuncRef {
+                name: ffi.to_string(),
+                param_types: Vec::new(),
+                return_type: HirType::Any,
+            };
+            return lower_call(ctx, &callee, args);
+        }
+    }
+
+    if (module == "perry/compose" || module == "perry/container-compose") && object.is_none() {
+        if let Some((_, ffi)) = PERRY_COMPOSE_TABLE.iter().find(|(m, _)| *m == method) {
+            let callee = Expr::ExternFuncRef {
+                name: ffi.to_string(),
+                param_types: Vec::new(),
+                return_type: HirType::Any,
+            };
+            return lower_call(ctx, &callee, args);
+        }
+    }
+
+    if module == "perry/workloads" && object.is_none() {
+        if let Some((_, ffi)) = PERRY_WORKLOADS_TABLE.iter().find(|(m, _)| *m == method) {
+            let callee = Expr::ExternFuncRef {
+                name: ffi.to_string(),
+                param_types: Vec::new(),
+                return_type: HirType::Any,
+            };
+            return lower_call(ctx, &callee, args);
+        }
+    }
+
     // `perry/ui.App({ title, width, height, body, icon? })` — minimum-viable
     // dispatch so a perry/ui app actually launches an NSApplication and
     // shows a window. Pre-v0.5.10 this fell into the receiver-less early-
@@ -3463,20 +3496,37 @@ static PERRY_CONTAINER_TABLE: &[(&str, &str)] = &[
     ("listImages",  "js_container_listImages"),
     ("removeImage", "js_container_removeImage"),
     ("getBackend",  "js_container_getBackend"),
+    ("detectBackend", "js_container_detectBackend"),
     ("composeUp",   "js_container_composeUp"),
+];
+
+/// Maps perry/workloads TypeScript function names to their FFI symbols.
+static PERRY_WORKLOADS_TABLE: &[(&str, &str)] = &[
+    ("graph",         "js_workload_graph"),
+    ("node",          "js_workload_node"),
+    ("runGraph",      "js_workload_runGraph"),
+    ("inspectGraph",  "js_workload_inspectGraph"),
+    ("down",          "js_workload_handle_down"),
+    ("status",        "js_workload_handle_status"),
+    ("handleGraph",   "js_workload_handle_graph"),
+    ("handleLogs",    "js_workload_handle_logs"),
+    ("handleExec",    "js_workload_handle_exec"),
+    ("handlePs",      "js_workload_handle_ps"),
 ];
 
 /// Maps perry/compose TypeScript function names to their FFI symbols.
 static PERRY_COMPOSE_TABLE: &[(&str, &str)] = &[
-    ("up",      "js_compose_up"),
-    ("down",    "js_compose_down"),
-    ("ps",      "js_compose_ps"),
-    ("logs",    "js_compose_logs"),
-    ("exec",    "js_compose_exec"),
-    ("config",  "js_compose_config"),
-    ("start",   "js_compose_start"),
-    ("stop",    "js_compose_stop"),
-    ("restart", "js_compose_restart"),
+    ("up",      "js_container_composeUp"),
+    ("down",    "js_container_compose_down"),
+    ("ps",      "js_container_compose_ps"),
+    ("logs",    "js_container_compose_logs"),
+    ("exec",    "js_container_compose_exec"),
+    ("config",  "js_container_compose_config"),
+    ("start",   "js_container_compose_start"),
+    ("stop",    "js_container_compose_stop"),
+    ("restart", "js_container_compose_restart"),
+    ("graph",   "js_container_compose_graph"),
+    ("status",  "js_container_compose_status"),
 ];
 
 const PERRY_UI_TABLE: &[UiSig] = &[
