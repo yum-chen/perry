@@ -72,6 +72,13 @@ pub struct ContainerSpec {
     pub entrypoint: Option<Vec<String>>,
     pub network: Option<String>,
     pub rm: Option<bool>,
+    // Security and isolation fields
+    pub privileged: Option<bool>,
+    pub read_only: Option<bool>,
+    pub security_opt: Option<Vec<String>>,
+    pub cap_add: Option<Vec<String>>,
+    pub cap_drop: Option<Vec<String>>,
+    pub isolation_level: Option<IsolationLevel>,
 }
 
 /// Handle returned after creating/running a container.
@@ -90,6 +97,7 @@ pub struct ContainerInfo {
     pub status: String,
     pub ports: Vec<String>,
     pub created: String,
+    pub ip: Option<String>,
 }
 
 /// Logs from a container.
@@ -622,6 +630,17 @@ pub enum RuntimeSpec {
     Microvm { config: Option<serde_json::Value> },
     Wasm { module: Option<String> },
     Auto,
+}
+
+impl From<RuntimeSpec> for IsolationLevel {
+    fn from(spec: RuntimeSpec) -> Self {
+        match spec {
+            RuntimeSpec::Oci => IsolationLevel::Container,
+            RuntimeSpec::Microvm { .. } => IsolationLevel::MicroVm,
+            RuntimeSpec::Wasm { .. } => IsolationLevel::Wasm,
+            RuntimeSpec::Auto => IsolationLevel::Container,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

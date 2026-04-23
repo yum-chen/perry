@@ -103,6 +103,12 @@ impl Service {
             entrypoint: self.entrypoint.clone(),
             network: self.networks.as_ref().and_then(|n| n.first().cloned()),
             rm: Some(false),
+            privileged: self.privileged,
+            read_only: self.read_only,
+            security_opt: None,
+            cap_add: None,
+            cap_drop: None,
+            isolation_level: self.isolation_level.clone(),
         };
 
         backend.run(&spec).await?;

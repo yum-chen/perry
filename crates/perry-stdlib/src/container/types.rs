@@ -76,6 +76,12 @@ impl From<ContainerSpec> for perry_container_compose::types::ContainerSpec {
             entrypoint: spec.entrypoint,
             network: spec.network,
             rm: spec.rm,
+            privileged: None,
+            read_only: None,
+            security_opt: None,
+            cap_add: None,
+            cap_drop: None,
+            isolation_level: None,
         }
     }
 }
@@ -100,6 +106,7 @@ pub struct ContainerInfo {
     pub status: String,
     pub ports: Vec<String>,
     pub created: String,
+    pub ip: Option<String>,
 }
 
 impl From<perry_container_compose::types::ContainerInfo> for ContainerInfo {
@@ -111,6 +118,7 @@ impl From<perry_container_compose::types::ContainerInfo> for ContainerInfo {
             status: info.status,
             ports: info.ports,
             created: info.created,
+            ip: info.ip,
         }
     }
 }

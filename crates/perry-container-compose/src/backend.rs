@@ -237,6 +237,7 @@ pub trait CliProtocol: Send + Sync {
             status: e.status,
             ports: e.ports,
             created: e.created,
+            ip: None,
         }).collect())
     }
     fn parse_inspect_output(&self, stdout: &str) -> Result<ContainerInfo> {
@@ -249,6 +250,7 @@ pub trait CliProtocol: Send + Sync {
             status: e.state.status,
             ports: vec![],
             created: e.created,
+            ip: e.network_settings.map(|n| n.ip_address).filter(|s| !s.is_empty()),
         })
     }
     fn parse_list_images_output(&self, stdout: &str) -> Result<Vec<ImageInfo>> {
@@ -312,8 +314,16 @@ struct DockerInspectOutput {
     config: DockerInspectConfig,
     #[serde(rename = "State")]
     state: DockerInspectState,
+    #[serde(rename = "NetworkSettings")]
+    network_settings: Option<DockerNetworkSettings>,
     #[serde(rename = "Created")]
     created: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DockerNetworkSettings {
+    #[serde(rename = "IPAddress")]
+    ip_address: String,
 }
 
 #[derive(Debug, Deserialize)]

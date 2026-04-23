@@ -30,13 +30,13 @@ impl ContainerContext {
 
     pub fn register_handle<T: 'static + Send + Sync>(&self, value: T) -> u64 {
         let id = self.next_handle_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.insert(id, Box::new(value));
+        self.handles.insert(id, Box::new(Arc::new(value)));
         id
     }
 
     pub fn get_handle<T: 'static + Send + Sync>(&self, id: u64) -> Option<Arc<T>> {
         self.handles.get(&id).and_then(|entry| {
-            entry.value().downcast_ref::<Arc<T>>().map(|arc| Arc::clone(arc))
+            entry.value().downcast_ref::<Arc<T>>().cloned()
         })
     }
 

@@ -279,6 +279,7 @@ impl WorkloadGraphEngine {
     pub async fn run(&self, graph: WorkloadGraph, opts: RunGraphOptions) -> Result<GraphHandle> {
         let levels = compute_topological_levels(&graph)?;
         let mut started: Vec<String> = vec![];
+        let mut node_id_to_container_name: HashMap<String, String> = HashMap::new();
 
         let strategy = opts.strategy.unwrap_or(ExecutionStrategy::DependencyAware);
         let on_failure = opts.on_failure.unwrap_or(FailureStrategy::RollbackAll);
@@ -293,22 +294,86 @@ impl WorkloadGraphEngine {
             for node_id in nodes_to_start {
                 let node = graph.nodes.get(&node_id).unwrap();
 
+                // Resolve references in environment variables
+                let mut resolved_env = HashMap::new();
+                for (k, v) in &node.env {
+                    let val = match v {
+                        crate::types::WorkloadEnvValue::Literal(s) => s.clone(),
+                        crate::types::WorkloadEnvValue::Ref(r) => {
+                            let dep_container_name = node_id_to_container_name.get(&r.node_id)
+                                .ok_or_else(|| ComposeError::ValidationError { message: format!("Node {} referenced before start", r.node_id) })?;
+
+                            match r.projection {
+                                crate::types::RefProjection::Ip => {
+                                    let info = self.backend.inspect(dep_container_name).await?;
+                                    info.ip.unwrap_or_else(|| dep_container_name.clone())
+                                }
+                                crate::types::RefProjection::Endpoint => {
+                                    let info = self.backend.inspect(dep_container_name).await?;
+                                    let ip = info.ip.unwrap_or_else(|| dep_container_name.clone());
+                                    if let Some(port) = &r.port {
+                                        format!("{}:{}", ip, port)
+                                    } else {
+                                        ip
+                                    }
+                                }
+                                crate::types::RefProjection::InternalUrl => {
+                                    let info = self.backend.inspect(dep_container_name).await?;
+                                    let ip = info.ip.unwrap_or_else(|| dep_container_name.clone());
+                                    let port = r.port.as_deref().unwrap_or("80");
+                                    format!("http://{}:{}", ip, port)
+                                }
+                            }
+                        }
+                    };
+                    resolved_env.insert(k.clone(), val);
+                }
+
                 // Construct ContainerSpec from WorkloadNode and Policy
-                let spec = ContainerSpec {
+                let container_name = node.name.clone();
+                let mut spec = ContainerSpec {
                     image: node.image.clone().unwrap_or_default(),
-                    name: Some(node.name.clone()),
+                    name: Some(container_name.clone()),
                     ports: Some(node.ports.clone()),
-                    env: Some(HashMap::new()), // Need to resolve refs later
+                    env: Some(resolved_env),
+                    isolation_level: Some(node.runtime.clone().into()),
                     ..Default::default()
                 };
 
-                // Apply Policy Requirement 15.1
-                if node.policy.tier == crate::types::PolicyTier::Untrusted {
-                    // Force MicroVm etc.
+                // Apply Policy Tier Requirements
+                match node.policy.tier {
+                    crate::types::PolicyTier::Default => {
+                        // Inherit from node.runtime/spec defaults
+                    }
+                    crate::types::PolicyTier::Isolated => {
+                        spec.network = Some("none".to_string());
+                    }
+                    crate::types::PolicyTier::Hardened => {
+                        spec.network = Some("none".to_string());
+                        spec.read_only = Some(true);
+                        spec.cap_drop = Some(vec!["ALL".to_string()]);
+                    }
+                    crate::types::PolicyTier::Untrusted => {
+                        spec.network = Some("none".to_string());
+                        spec.read_only = Some(true);
+                        spec.cap_drop = Some(vec!["ALL".to_string()]);
+                        spec.isolation_level = Some(crate::types::IsolationLevel::MicroVm);
+                    }
+                }
+
+                // Override if explicitly set in policy
+                if let Some(ro) = node.policy.read_only_root {
+                    spec.read_only = Some(ro);
+                }
+                if let Some(nn) = node.policy.no_network {
+                    if nn { spec.network = Some("none".to_string()); }
                 }
 
                 match self.backend.run(&spec).await {
-                    Ok(_) => started.push(node_id),
+                    Ok(_) => {
+                        started.push(node_id.clone());
+                        node_id_to_container_name.insert(node_id, container_name);
+                    }
                     Err(e) => match on_failure {
                         FailureStrategy::RollbackAll => {
                             for s in started.iter().rev() {
