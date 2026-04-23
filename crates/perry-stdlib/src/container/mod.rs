@@ -171,11 +171,56 @@ pub unsafe extern "C" fn js_workload_runGraph(graph_ptr: *const StringHeader, op
             Err(e) => return Err::<u64, String>(e.to_string()),
         };
 
-        let engine = perry_container_compose::workload_engine::WorkloadGraphEngine::new(backend);
-        match engine.run(graph, opts).await {
+        match perry_container_compose::workload_engine::WorkloadGraphEngine::run(backend, graph, opts).await {
             Ok(id) => Ok(id),
             Err(e) => Err::<u64, String>(e.to_string()),
         }
+    });
+
+    promise
+}
+
+/// Get status of a running workload graph
+/// FFI: js_workload_handle_status(handle_id: f64) -> *mut Promise
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_handle_status(handle_id: f64) -> *mut Promise {
+    let promise = js_promise_new();
+    let id = handle_id as u64;
+
+    crate::common::spawn_for_promise_deferred(promise as *mut u8, async move {
+        let engine = perry_container_compose::workload_engine::WorkloadGraphEngine::get_engine(id)
+            .ok_or_else(|| "Invalid workload handle".to_string())?;
+
+        let status = engine.status().await.map_err(|e| e.to_string())?;
+        serde_json::to_string(&status).map_err(|e| e.to_string())
+    }, |json| {
+        let str_ptr = perry_runtime::js_string_from_bytes(json.as_ptr(), json.len() as u32);
+        perry_runtime::JSValue::string_ptr(str_ptr).bits()
+    });
+
+    promise
+}
+
+/// Stop and remove a workload graph
+/// FFI: js_workload_handle_down(handle_id: f64, opts_json: *const StringHeader) -> *mut Promise
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_handle_down(handle_id: f64, opts_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
+    let id = handle_id as u64;
+    let opts_json = string_from_header(opts_ptr);
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let engine = perry_container_compose::workload_engine::WorkloadGraphEngine::get_engine(id)
+            .ok_or_else(|| "Invalid workload handle".to_string())?;
+
+        let remove_volumes = opts_json
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.get("volumes").and_then(|vol| vol.as_bool()))
+            .unwrap_or(false);
+
+        engine.down(remove_volumes).await.map_err(|e| e.to_string())?;
+        perry_container_compose::workload_engine::WorkloadGraphEngine::unregister(id);
+        Ok(0u64)
     });
 
     promise

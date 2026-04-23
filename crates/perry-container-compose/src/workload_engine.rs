@@ -1,11 +1,12 @@
 use crate::error::{ComposeError, Result};
 use crate::backend::ContainerBackend;
-use crate::types::{ContainerSpec, ContainerInfo, IsolationLevel};
+use crate::types::{ContainerSpec, ContainerInfo, IsolationLevel, ContainerLogs};
 use crate::workload_types::*;
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use indexmap::IndexMap;
+use tokio::sync::Mutex;
 
 /// Global registry of running workload engines
 static WORKLOAD_ENGINES: once_cell::sync::Lazy<std::sync::Mutex<IndexMap<u64, Arc<WorkloadGraphEngine>>>> =
@@ -16,8 +17,8 @@ static NEXT_WORKLOAD_ID: AtomicU64 = AtomicU64::new(1);
 pub struct WorkloadGraphEngine {
     pub backend: Arc<dyn ContainerBackend>,
     pub graph: WorkloadGraph,
-    pub started_ids: std::sync::Mutex<Vec<String>>,
-    pub running_containers: std::sync::Mutex<HashMap<String, ContainerInfo>>,
+    pub started_ids: Mutex<Vec<String>>,
+    pub running_containers: Mutex<HashMap<String, ContainerInfo>>,
 }
 
 impl WorkloadGraphEngine {
@@ -25,9 +26,17 @@ impl WorkloadGraphEngine {
         Self {
             backend,
             graph,
-            started_ids: std::sync::Mutex::new(Vec::new()),
-            running_containers: std::sync::Mutex::new(HashMap::new()),
+            started_ids: Mutex::new(Vec::new()),
+            running_containers: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn get_engine(id: u64) -> Option<Arc<WorkloadGraphEngine>> {
+        WORKLOAD_ENGINES.lock().unwrap().get(&id).cloned()
+    }
+
+    pub fn unregister(id: u64) {
+        WORKLOAD_ENGINES.lock().unwrap().shift_remove(&id);
     }
 
     pub async fn run(
@@ -50,8 +59,8 @@ impl WorkloadGraphEngine {
             match engine.backend.run(&spec).await {
                 Ok(handle) => {
                     let info = engine.backend.inspect(&handle.id).await?;
-                    engine.started_ids.lock().unwrap().push(node_id.clone());
-                    engine.running_containers.lock().unwrap().insert(node_id.clone(), info);
+                    engine.started_ids.lock().await.push(node_id.clone());
+                    engine.running_containers.lock().await.insert(node_id.clone(), info);
                 }
                 Err(e) => {
                     match opts.on_failure {
@@ -69,6 +78,73 @@ impl WorkloadGraphEngine {
         let id = NEXT_WORKLOAD_ID.fetch_add(1, Ordering::SeqCst);
         WORKLOAD_ENGINES.lock().unwrap().insert(id, engine);
         Ok(id)
+    }
+
+    pub async fn down(&self, _remove_volumes: bool) -> Result<()> {
+        self.rollback().await;
+        // In a more complete impl, we would also handle named volumes
+        Ok(())
+    }
+
+    pub async fn status(&self) -> Result<crate::types::StackStatus> {
+        let started = self.started_ids.lock().await.clone();
+        let running = self.running_containers.lock().await;
+
+        let mut services = HashMap::new();
+        for id in self.graph.nodes.keys() {
+            let state = if running.contains_key(id) {
+                "running".to_string()
+            } else if started.contains(id) {
+                "stopped".to_string()
+            } else {
+                "pending".to_string()
+            };
+
+            services.insert(id.clone(), crate::types::ServiceStatus {
+                state,
+                container_id: running.get(id).map(|info| info.id.clone()),
+                error: None,
+            });
+        }
+
+        Ok(crate::types::StackStatus {
+            services,
+            healthy: started.len() == self.graph.nodes.len(),
+        })
+    }
+
+    pub async fn ps(&self) -> Result<Vec<ContainerInfo>> {
+        let running = self.running_containers.lock().await;
+        Ok(running.values().cloned().collect())
+    }
+
+    pub async fn logs(&self, node_id: Option<&str>, tail: Option<u32>) -> Result<ContainerLogs> {
+        let running = self.running_containers.lock().await;
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        let target_ids: Vec<String> = if let Some(id) = node_id {
+            vec![id.to_string()]
+        } else {
+            running.keys().cloned().collect()
+        };
+
+        for id in target_ids {
+            if let Some(info) = running.get(&id) {
+                let logs = self.backend.logs(&info.id, tail).await?;
+                stdout.push_str(&format!("--- {} ---\n{}", id, logs.stdout));
+                stderr.push_str(&format!("--- {} ---\n{}", id, logs.stderr));
+            }
+        }
+
+        Ok(ContainerLogs { stdout, stderr })
+    }
+
+    pub async fn exec(&self, node_id: &str, cmd: &[String]) -> Result<ContainerLogs> {
+        let running = self.running_containers.lock().await;
+        let info = running.get(node_id).ok_or_else(|| ComposeError::NotFound(node_id.to_string()))?;
+        self.backend.exec(&info.id, cmd, None, None).await
     }
 
     fn resolve_order(&self) -> Result<Vec<String>> {
@@ -154,8 +230,8 @@ impl WorkloadGraphEngine {
     }
 
     async fn rollback(&self) {
-        let ids = self.started_ids.lock().unwrap().clone();
-        let containers = self.running_containers.lock().unwrap();
+        let ids = self.started_ids.lock().await.clone();
+        let containers = self.running_containers.lock().await;
 
         for node_id in ids.iter().rev() {
             if let Some(info) = containers.get(node_id) {
