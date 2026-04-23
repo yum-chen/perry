@@ -40,7 +40,7 @@ pub(crate) mod mod_private {
                 let _ = BACKEND.set(Arc::clone(&b));
                 Ok(b)
             }
-            Err(probed) => Err(format!("No backend found: {:?}", probed)),
+            Err(probed) => Err(compose_error_to_js(&perry_container_compose::error::ComposeError::NoBackendFound { probed })),
         }
     }
 }

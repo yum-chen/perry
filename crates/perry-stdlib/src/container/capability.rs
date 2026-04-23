@@ -1,6 +1,7 @@
 //! OCI isolation for Shell capabilities.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use crate::container::types::{ContainerSpec, ContainerLogs};
 use crate::container::verification;
 use crate::container::mod_private::get_global_backend_instance;
@@ -17,11 +18,10 @@ pub async fn alloy_container_run_capability(
     grants: &CapabilityGrants,
 ) -> Result<ContainerLogs, String> {
     // 1. Verify image signature before running
-    let digest = verification::verify_image(image).await?;
 
     // 2. Build ephemeral ContainerSpec with security constraints
     let spec = ContainerSpec {
-        image: format!("{}@{}", image, digest),
+        image: image.to_string(),
         name: Some(format!("alloy-cap-{}-{}", name, rand::random::<u32>())),
         // No persistent volumes
         volumes: None,
@@ -37,8 +37,10 @@ pub async fn alloy_container_run_capability(
 
     // 3. Run
     let backend = get_global_backend_instance().await.map_err(|e| e.to_string())?;
+    let backend_arc: Arc<dyn perry_container_compose::ContainerBackend> = backend.clone();
+    let digest = verification::verify_image(image, &backend_arc).await.map_err(|e| e.to_string())?;
     let handle = backend.run(&perry_container_compose::types::ContainerSpec {
-        image: spec.image,
+        image: format!("{}@{}", spec.image, digest),
         name: spec.name,
         ports: spec.ports,
         volumes: spec.volumes,
