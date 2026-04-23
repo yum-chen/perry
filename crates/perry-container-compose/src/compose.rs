@@ -1,9 +1,9 @@
 use indexmap::IndexMap;
 use crate::error::{ComposeError, Result};
 use crate::types::{ComposeSpec, ContainerInfo, ContainerLogs, ContainerSpec, ComposeHandle, ContainerHandle, ListOrDict};
-use crate::backend::ContainerBackend;
+use crate::backend::{ContainerBackend, NetworkConfig, VolumeConfig};
 use crate::service::generate_name;
-use std::collections::{BTreeSet};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -80,8 +80,18 @@ impl ComposeEngine {
 
         if let Some(networks) = &self.spec.networks {
             for (name, config) in networks {
-                let config = config.clone().unwrap_or_default();
-                if let Err(e) = self.backend.create_network(name, &config).await {
+                let config_raw = config.clone().unwrap_or_default();
+                let network_config = NetworkConfig {
+                    driver: config_raw.driver.clone(),
+                    labels: match &config_raw.labels {
+                        Some(ListOrDict::Dict(d)) => d.iter().map(|(k, v)| (k.clone(), v.as_ref().map(|val| format!("{:?}", val)).unwrap_or_default())).collect(),
+                        _ => HashMap::new(),
+                    },
+                    internal: config_raw.internal.unwrap_or(false),
+                    enable_ipv6: config_raw.enable_ipv6.unwrap_or(false),
+                };
+
+                if let Err(e) = self.backend.create_network(name, &network_config).await {
                     self.rollback(&started_containers, &created_networks, &created_volumes).await;
                     return Err(e);
                 }
@@ -91,8 +101,15 @@ impl ComposeEngine {
 
         if let Some(volumes) = &self.spec.volumes {
             for (name, config) in volumes {
-                let config = config.clone().unwrap_or_default();
-                if let Err(e) = self.backend.create_volume(name, &config).await {
+                let config_raw = config.clone().unwrap_or_default();
+                let volume_config = VolumeConfig {
+                    driver: config_raw.driver.clone(),
+                    labels: match &config_raw.labels {
+                        Some(ListOrDict::Dict(d)) => d.iter().map(|(k, v)| (k.clone(), v.as_ref().map(|val| format!("{:?}", val)).unwrap_or_default())).collect(),
+                        _ => HashMap::new(),
+                    },
+                };
+                if let Err(e) = self.backend.create_volume(name, &volume_config).await {
                     self.rollback(&started_containers, &created_networks, &created_volumes).await;
                     return Err(e);
                 }
@@ -109,7 +126,7 @@ impl ComposeEngine {
                 ports: service.ports.as_ref().map(|p| p.iter().map(|ps| format!("{:?}", ps)).collect()),
                 volumes: service.volumes.as_ref().map(|v| v.iter().map(|vs| format!("{:?}", vs)).collect()),
                 env: match &service.environment {
-                    Some(ListOrDict::Dict(d)) => Some(d.iter().map(|(k, v)| (k.clone(), format!("{:?}", v))).collect()),
+                    Some(ListOrDict::Dict(d)) => Some(d.iter().map(|(k, v)| (k.clone(), v.as_ref().map(|val| format!("{:?}", val)).unwrap_or_default())).collect()),
                     _ => None,
                 },
                 cmd: match &service.command {

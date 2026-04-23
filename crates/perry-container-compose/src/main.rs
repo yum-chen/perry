@@ -1,7 +1,6 @@
 //! CLI entry point for `perry-compose` binary.
 
-use clap::Parser;
-use perry_container_compose::cli::{run, Cli};
+use perry_container_compose::cli::run;
 use tracing_subscriber::{fmt, EnvFilter};
 
 #[tokio::main]
@@ -12,9 +11,7 @@ async fn main() {
         .with_target(false)
         .init();
 
-    let cli = Cli::parse();
-
-    if let Err(e) = run(cli).await {
+    if let Err(e) = run().await {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }

@@ -6,102 +6,22 @@
  * @module perry/compose
  */
 
-// ============ Configuration Types ============
+import {
+  ComposeSpec,
+  ContainerInfo,
+  ContainerLogs,
+  BackendInfo
+} from 'perry/container';
 
-/**
- * Build configuration for a service image.
- */
-export interface Build {
-  /** Build context directory (relative to compose file) */
-  context?: string;
-  /** Path to Dockerfile */
-  dockerfile?: string;
-  /** Build-time arguments */
-  args?: Record<string, string>;
-  /** Labels to add to the built image */
-  labels?: Record<string, string>;
-  /** Build target stage */
-  target?: string;
-  /** Network to use during build */
-  network?: string;
-}
-
-/**
- * A single service definition in a Compose file.
- */
-export interface Service {
-  /** Container image reference */
-  image?: string;
-  /** Explicit container name */
-  container_name?: string;
-  /** Port mappings, e.g. "8080:80" */
-  ports?: string[];
-  /** Environment variables (map or KEY=VALUE list) */
-  environment?: Record<string, string> | string[];
-  /** Container labels */
-  labels?: Record<string, string>;
-  /** Volume mounts, e.g. "./data:/data:ro" */
-  volumes?: string[];
-  /** Build configuration */
-  build?: Build;
-  /** Service dependencies */
-  depends_on?: string[] | Record<string, { condition?: string }>;
-  /** Restart policy */
-  restart?: "no" | "always" | "on-failure" | "unless-stopped";
-  /** Override container entrypoint */
-  entrypoint?: string | string[];
-  /** Override container command */
-  command?: string | string[];
-  /** Networks this service is attached to */
-  networks?: string[];
-}
-
-/**
- * Network definition in a Compose file.
- */
-export interface ComposeNetwork {
-  driver?: string;
-  external?: boolean;
-  name?: string;
-}
-
-/**
- * Volume definition in a Compose file.
- */
-export interface ComposeVolume {
-  driver?: string;
-  external?: boolean;
-  name?: string;
-}
-
-/**
- * Root Compose file structure (docker-compose.yaml / compose.yaml).
- */
-export interface ComposeSpec {
-  version?: string;
-  services: Record<string, Service>;
-  networks?: Record<string, ComposeNetwork>;
-  volumes?: Record<string, ComposeVolume>;
-}
+export {
+  ComposeSpec,
+  ComposeService,
+  ComposeNetwork,
+  ComposeVolume,
+  ListOrDict
+} from 'perry/container';
 
 // ============ Operation Result Types ============
-
-/**
- * Status of a service container.
- */
-export type ContainerStatusString = "running" | "stopped" | "not_found";
-
-/**
- * Service status entry from the `ps` command.
- */
-export interface ServiceStatus {
-  /** Service name as defined in the compose file */
-  service: string;
-  /** Container name */
-  container: string;
-  /** Current container status */
-  status: ContainerStatusString;
-}
 
 /**
  * Result of an exec call inside a container.
@@ -109,16 +29,6 @@ export interface ServiceStatus {
 export interface ExecResult {
   stdout: string;
   stderr: string;
-  exitCode: number;
-}
-
-/**
- * Generic FFI result wrapper.
- */
-export interface ComposeResult<T> {
-  ok: boolean;
-  result?: T;
-  error?: string;
 }
 
 // ============ Options Types ============
@@ -173,12 +83,6 @@ export interface ConfigOptions {
  *
  * @param file - Path to compose file (default: "compose.yaml")
  * @param options - Up options
- *
- * @example
- * ```typescript
- * import { up } from 'perry/compose';
- * await up('compose.yaml', { detach: true });
- * ```
  */
 export function up(file?: string, options?: UpOptions): Promise<void>;
 
@@ -187,12 +91,6 @@ export function up(file?: string, options?: UpOptions): Promise<void>;
  *
  * @param file - Path to compose file
  * @param options - Down options
- *
- * @example
- * ```typescript
- * import { down } from 'perry/compose';
- * await down('compose.yaml', { volumes: true });
- * ```
  */
 export function down(file?: string, options?: DownOptions): Promise<void>;
 
@@ -200,16 +98,9 @@ export function down(file?: string, options?: DownOptions): Promise<void>;
  * List service statuses.
  *
  * @param file - Path to compose file
- * @returns Array of ServiceStatus entries
- *
- * @example
- * ```typescript
- * import { ps } from 'perry/compose';
- * const statuses = await ps('compose.yaml');
- * console.table(statuses);
- * ```
+ * @returns Array of ContainerInfo entries
  */
-export function ps(file?: string): Promise<ServiceStatus[]>;
+export function ps(file?: string): Promise<ContainerInfo[]>;
 
 /**
  * Get logs from services.
@@ -217,19 +108,13 @@ export function ps(file?: string): Promise<ServiceStatus[]>;
  * @param file - Path to compose file
  * @param services - Services to get logs from (empty = all)
  * @param options - Log options
- * @returns Map of service name → log output
- *
- * @example
- * ```typescript
- * import { logs } from 'perry/compose';
- * const output = await logs('compose.yaml', ['web'], { tail: 100 });
- * ```
+ * @returns ContainerLogs object
  */
 export function logs(
   file?: string,
   services?: string[],
   options?: LogsOptions
-): Promise<Record<string, string>>;
+): Promise<ContainerLogs>;
 
 /**
  * Execute a command in a running service container.
@@ -238,20 +123,13 @@ export function logs(
  * @param service - Service name
  * @param cmd - Command and arguments to execute
  * @param options - Exec options
- *
- * @example
- * ```typescript
- * import { exec } from 'perry/compose';
- * const result = await exec('compose.yaml', 'web', ['sh', '-c', 'ls /app']);
- * console.log(result.stdout);
- * ```
  */
 export function exec(
   file: string,
   service: string,
   cmd: string[],
   options?: ExecOptions
-): Promise<ExecResult>;
+): Promise<ContainerLogs>;
 
 /**
  * Validate and display the parsed compose configuration.
@@ -259,13 +137,6 @@ export function exec(
  * @param file - Path to compose file
  * @param options - Config options
  * @returns Validated configuration as YAML or JSON string
- *
- * @example
- * ```typescript
- * import { config } from 'perry/compose';
- * const yaml = await config('compose.yaml');
- * console.log(yaml);
- * ```
  */
 export function config(file?: string, options?: ConfigOptions): Promise<string>;
 

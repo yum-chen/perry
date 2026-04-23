@@ -14,9 +14,9 @@ export interface ContainerSpec {
   image: string;
   /** Container name (optional) */
   name?: string;
-  /** Port mappings (e.g., "8080:80") */
+  /** Port mappings (e.g., ["8080:80"]) */
   ports?: string[];
-  /** Volume mounts (e.g., "/host/path:/container/path:ro") */
+  /** Volume mounts (e.g., ["/host/path:/container/path:ro"]) */
   volumes?: string[];
   /** Environment variables */
   env?: Record<string, string>;
@@ -28,6 +28,8 @@ export interface ContainerSpec {
   network?: string;
   /** Remove container on exit */
   rm?: boolean;
+  /** Read-only root filesystem */
+  readOnly?: boolean;
 }
 
 /**
@@ -130,18 +132,10 @@ export interface ContainerLogs {
 /**
  * Get logs from a container.
  * @param id Container ID or name
- * @param options Options for logs
- * @returns Promise resolving to ContainerLogs or ReadableStream
+ * @param tail Number of lines to return from the end
+ * @returns Promise resolving to ContainerLogs
  */
-export function logs(
-  id: string,
-  options?: {
-    /** If true, return a ReadableStream of log lines */
-    follow?: boolean;
-    /** Number of lines to return from the end */
-    tail?: number;
-  }
-): Promise<ContainerLogs | ReadableStream<string>>;
+export function logs(id: string, tail?: number): Promise<ContainerLogs>;
 
 /**
  * Execute a command in a running container.
@@ -183,7 +177,7 @@ export interface ImageInfo {
 
 /**
  * Pull a container image from a registry.
- * @param reference Image reference (e.g., "alpine:latest", "cgr.dev/chainguard/alpine-base@sha256:...")
+ * @param reference Image reference (e.g., "alpine:latest")
  * @returns Promise resolving when image is pulled
  */
 export function pullImage(reference: string): Promise<void>;
@@ -206,18 +200,26 @@ export function removeImage(reference: string, force?: boolean): Promise<void>;
 // Compose (Multi-Container Orchestration)
 // ---------------------------------------------------------------------------
 
+export type ListOrDict = Record<string, string | number | boolean | null> | string[];
+
 /**
  * Multi-container application specification.
  */
 export interface ComposeSpec {
-  /** Compose file version */
+  /** Project name (optional) */
+  name?: string;
+  /** Compose file version (deprecated) */
   version?: string;
   /** Service definitions */
   services: Record<string, ComposeService>;
   /** Network definitions */
-  networks?: Record<string, ComposeNetwork>;
+  networks?: Record<string, ComposeNetwork | null>;
   /** Volume definitions */
-  volumes?: Record<string, ComposeVolume>;
+  volumes?: Record<string, ComposeVolume | null>;
+  /** Secret definitions */
+  secrets?: Record<string, any>;
+  /** Config definitions */
+  configs?: Record<string, any>;
 }
 
 /**
@@ -225,70 +227,91 @@ export interface ComposeSpec {
  */
 export interface ComposeService {
   /** Container image */
-  image: string;
+  image?: string;
   /** Build configuration */
-  build?: {
-    /** Build context directory */
-    context: string;
-    /** Dockerfile path (relative to context) */
+  build?: string | {
+    context?: string;
     dockerfile?: string;
+    args?: ListOrDict;
+    labels?: ListOrDict;
+    target?: string;
   };
   /** Command to run */
   command?: string | string[];
+  /** Entrypoint */
+  entrypoint?: string | string[];
   /** Environment variables */
-  environment?: Record<string, string> | string[];
+  environment?: ListOrDict;
+  /** Environment files */
+  env_file?: string | string[];
   /** Port mappings */
-  ports?: string[];
+  ports?: Array<string | number | {
+    target: number | string;
+    published?: number | string;
+    protocol?: string;
+    mode?: string;
+  }>;
   /** Volume mounts */
-  volumes?: string[];
+  volumes?: Array<string | {
+    type: "bind" | "volume" | "tmpfs" | "cluster" | "npipe" | "image";
+    source?: string;
+    target?: string;
+    read_only?: boolean;
+  }>;
   /** Networks to attach to */
-  networks?: string[];
+  networks?: string[] | Record<string, any>;
   /** Service dependencies */
-  depends_on?: string[];
+  depends_on?: string[] | Record<string, {
+    condition: "service_started" | "service_healthy" | "service_completed_successfully";
+    required?: boolean;
+  }>;
   /** Restart policy */
   restart?: string;
   /** Healthcheck configuration */
-  healthcheck?: ComposeHealthcheck;
-}
-
-/**
- * Healthcheck configuration.
- */
-export interface ComposeHealthcheck {
-  /** Test command (string or array) */
-  test: string | string[];
-  /** Check interval (e.g., "30s") */
-  interval?: string;
-  /** Timeout (e.g., "10s") */
-  timeout?: string;
-  /** Number of retries before unhealthy */
-  retries?: number;
-  /** Startup grace period (e.g., "40s") */
-  start_period?: string;
+  healthcheck?: {
+    test: string | string[];
+    interval?: string;
+    timeout?: string;
+    retries?: number;
+    start_period?: string;
+  };
+  /** Explicit container name */
+  container_name?: string;
+  /** Labels */
+  labels?: ListOrDict;
+  /** Hostname */
+  hostname?: string;
+  /** User */
+  user?: string;
+  /** Working directory */
+  working_dir?: string;
+  /** Privileged mode */
+  privileged?: boolean;
+  /** Read-only root filesystem */
+  read_only?: boolean;
 }
 
 /**
  * Network configuration.
  */
 export interface ComposeNetwork {
-  /** Network driver */
   driver?: string;
-  /** External network reference */
+  driver_opts?: Record<string, string>;
   external?: boolean;
-  /** Network name */
+  internal?: boolean;
   name?: string;
+  labels?: ListOrDict;
 }
 
 /**
  * Volume configuration.
  */
 export interface ComposeVolume {
-  /** Volume driver */
   driver?: string;
-  /** External volume reference */
+  driver_opts?: Record<string, string>;
   external?: boolean;
-  /** Volume name */
   name?: string;
+  labels?: ListOrDict;
 }
 
 /**
@@ -296,31 +319,16 @@ export interface ComposeVolume {
  */
 export interface ComposeHandle {
   /** Stop and remove all resources in the stack */
-  down(options?: {
-    /** If true, also remove named volumes */
-    volumes?: boolean;
-  }): Promise<void>;
+  down(volumes?: boolean): Promise<void>;
 
   /** Get container info for all services in the stack */
   ps(): Promise<ContainerInfo[]>;
 
   /** Get logs from the stack */
-  logs(options?: {
-    /** Get logs only from this service */
-    service?: string;
-    /** Number of lines to return from the end */
-    tail?: number;
-  }): Promise<ContainerLogs>;
+  logs(service?: string, tail?: number): Promise<ContainerLogs>;
 
   /** Execute a command in a service container */
-  exec(
-    service: string,
-    cmd: string[],
-    options?: {
-      /** Environment variables */
-      env?: Record<string, string>;
-    }
-  ): Promise<ContainerLogs>;
+  exec(service: string, cmd: string[]): Promise<ContainerLogs>;
 }
 
 /**
@@ -335,7 +343,23 @@ export function composeUp(spec: ComposeSpec): Promise<ComposeHandle>;
 // ---------------------------------------------------------------------------
 
 /**
+ * Information about a detected container backend.
+ */
+export interface BackendInfo {
+  name: string;
+  available: boolean;
+  reason?: string;
+  version?: string;
+}
+
+/**
  * Get the name of the container backend being used.
- * @returns "apple/container" on macOS/iOS, "podman" on all other platforms
+ * @returns e.g. "apple/container", "orbstack", "podman", "docker"
  */
 export function getBackend(): string;
+
+/**
+ * Probe for all available container backends.
+ * @returns Array of information about probed backends
+ */
+export function detectBackend(): Promise<BackendInfo[]>;
