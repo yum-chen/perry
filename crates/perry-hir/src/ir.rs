@@ -1016,6 +1016,8 @@ pub enum Expr {
     ProcessMemoryUsage,
     // Process PID: process.pid -> number
     ProcessPid,
+    // process.exit(code) -> void
+    ProcessExit(Option<Box<Expr>>),
     // Process parent PID: process.ppid -> number
     ProcessPpid,
     // Process Node version string: process.version -> string (e.g. "v22.0.0")
@@ -1034,6 +1036,8 @@ pub enum Expr {
     ProcessKill { pid: Box<Expr>, signal: Option<Box<Expr>> },
     // process.stdin -> stub object { write: fn }
     ProcessStdin,
+    // process.env -> object
+    ProcessEnv,
     // process.stdout -> stub object { write: fn }
     ProcessStdout,
     // process.stderr -> stub object { write: fn }
@@ -1137,6 +1141,7 @@ pub enum Expr {
     MathSin(Box<Expr>),                  // Math.sin(x) -> number
     MathCos(Box<Expr>),                  // Math.cos(x) -> number
     MathTan(Box<Expr>),                  // Math.tan(x) -> number
+    MathExp(Box<Expr>),                  // Math.exp(x) -> number
     MathAsin(Box<Expr>),                 // Math.asin(x) -> number
     MathAcos(Box<Expr>),                 // Math.acos(x) -> number
     MathAtan(Box<Expr>),                 // Math.atan(x) -> number

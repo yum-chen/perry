@@ -712,16 +712,7 @@ pub async fn probe_all_backends() -> (Option<Box<dyn ContainerBackend>>, Vec<Bac
 
 fn platform_candidates() -> &'static [&'static str] {
     match std::env::consts::OS {
-        "macos" | "ios" => &[
-            "apple/container",
-            "orbstack",
-            "colima",
-            "rancher-desktop",
-            "lima",
-            "podman",
-            "nerdctl",
-            "docker",
-        ],
+        "macos" | "ios" => &["apple/container", "orbstack", "colima", "rancher-desktop", "podman", "lima", "docker"],
         "linux" => &["podman", "nerdctl", "docker"],
         _ => &["podman", "nerdctl", "docker"], // Windows + other
     }

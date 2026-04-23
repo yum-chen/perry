@@ -11,6 +11,7 @@ use crate::types::{
     ComposeHandle, ComposeSpec, ContainerInfo, ContainerSpec,
 };
 use indexmap::IndexMap;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -273,21 +274,13 @@ impl ComposeEngine {
                 .ok_or_else(|| ComposeError::NotFound(svc_name.clone()))?;
 
             let container_name = service::service_container_name(svc, svc_name);
-            // In MockBackend, actions are recorded. We need to make sure we call remove.
-            // The issue might be that service_container_name generates a NEW random name
-            // if image/explicit_name are not set.
-            // Let's use a more deterministic approach for tests or ensure we use the same name.
-
             let info_res = self.backend.inspect(&container_name).await;
 
             if let Ok(info) = info_res {
                 if info.status == "running" {
-                    let _ = self.backend.stop(&container_name, None).await;
+                    self.backend.stop(&container_name, None).await?;
                 }
-                let _ = self.backend.remove(&container_name, true).await;
-            } else {
-                // If it's not found by inspect, try to remove it anyway using the generated name
-                let _ = self.backend.remove(&container_name, true).await;
+                self.backend.remove(&container_name, true).await?;
             }
         }
 

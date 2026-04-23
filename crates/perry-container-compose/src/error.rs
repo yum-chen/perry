@@ -69,8 +69,7 @@ pub fn compose_error_to_js(e: &ComposeError) -> String {
         ComposeError::VerificationFailed { .. } => 403,
         ComposeError::NoBackendFound { .. } => 503,
         ComposeError::BackendNotAvailable { .. } => 503,
-        ComposeError::ServiceStartupFailed { .. } => 500,
-        ComposeError::IoError(_) => 500,
+        _ => 500,
     };
     serde_json::json!({
         "message": e.to_string(),
