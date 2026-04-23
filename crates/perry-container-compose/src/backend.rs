@@ -61,10 +61,13 @@ pub trait ContainerBackend: Send + Sync {
     async fn pull_image(&self, reference: &str) -> Result<()>;
     async fn list_images(&self) -> Result<Vec<ImageInfo>>;
     async fn remove_image(&self, reference: &str, force: bool) -> Result<()>;
+    async fn build(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Result<()>;
     async fn create_network(&self, name: &str, config: &NetworkConfig) -> Result<()>;
     async fn remove_network(&self, name: &str) -> Result<()>;
+    async fn inspect_network(&self, name: &str) -> Result<()>;
     async fn create_volume(&self, name: &str, config: &VolumeConfig) -> Result<()>;
     async fn remove_volume(&self, name: &str) -> Result<()>;
+    async fn inspect_volume(&self, name: &str) -> Result<()>;
 }
 
 pub trait CliProtocol: Send + Sync {
@@ -153,6 +156,25 @@ pub trait CliProtocol: Send + Sync {
     }
     fn remove_volume_args(&self, name: &str) -> Vec<String> {
         vec!["volume".into(), "rm".into(), name.into()]
+    }
+    fn inspect_network_args(&self, name: &str) -> Vec<String> {
+        vec!["network".into(), "inspect".into(), name.into()]
+    }
+    fn inspect_volume_args(&self, name: &str) -> Vec<String> {
+        vec!["volume".into(), "inspect".into(), name.into()]
+    }
+    fn build_args(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Vec<String> {
+        let mut args = vec!["build".into(), "-t".into(), image_name.into()];
+        if let Some(context) = &spec.context {
+            args.push(context.clone());
+        } else {
+            args.push(".".into());
+        }
+        if let Some(df) = &spec.dockerfile {
+            args.extend(["-f".into(), df.clone()]);
+        }
+        // ... more args could be added
+        args
     }
 
     fn docker_run_flags(&self, spec: &ContainerSpec, include_detach: bool) -> Vec<String> {
@@ -323,7 +345,7 @@ impl<P: CliProtocol> CliBackend<P> {
         Self { bin, protocol }
     }
 
-    async fn exec_raw(&self, subcommand_args: &[String]) -> Result<(String, String)> {
+    async fn exec_raw(&self, subcommand_args: &[String]) -> Result<(String, String, i32)> {
         let mut command = Command::new(&self.bin);
         if let Some(prefix) = self.protocol.subcommand_prefix() {
             command.args(prefix);
@@ -337,12 +359,13 @@ impl<P: CliProtocol> CliBackend<P> {
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let code = output.status.code().unwrap_or(-1);
 
         if output.status.success() {
-            Ok((stdout, stderr))
+            Ok((stdout, stderr, code))
         } else {
             Err(ComposeError::BackendError {
-                code: output.status.code().unwrap_or(-1),
+                code,
                 message: stderr,
             })
         }
@@ -369,7 +392,7 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
 
     async fn run(&self, spec: &ContainerSpec) -> Result<ContainerHandle> {
         let args = self.protocol.run_args(spec);
-        let (stdout, _) = self.exec_raw(&args).await?;
+        let (stdout, _, _) = self.exec_raw(&args).await?;
         let id = self.protocol.parse_container_id(&stdout)?;
         Ok(ContainerHandle { id, name: spec.name.clone() })
     }
@@ -381,7 +404,7 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
 
     async fn create(&self, spec: &ContainerSpec) -> Result<ContainerHandle> {
         let args = self.protocol.create_args(spec);
-        let (stdout, _) = self.exec_raw(&args).await?;
+        let (stdout, _, _) = self.exec_raw(&args).await?;
         let id = self.protocol.parse_container_id(&stdout)?;
         Ok(ContainerHandle { id, name: spec.name.clone() })
     }
@@ -403,32 +426,34 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
 
     async fn list(&self, all: bool) -> Result<Vec<ContainerInfo>> {
         let args = self.protocol.list_args(all);
-        let (stdout, _) = self.exec_raw(&args).await?;
+        let (stdout, _, _) = self.exec_raw(&args).await?;
         self.protocol.parse_list_output(&stdout)
     }
 
     async fn inspect(&self, id: &str) -> Result<ContainerInfo> {
         let args = self.protocol.inspect_args(id);
-        let (stdout, _) = self.exec_raw(&args).await?;
+        let (stdout, _, _) = self.exec_raw(&args).await?;
         self.protocol.parse_inspect_output(&stdout)
     }
 
     async fn logs(&self, id: &str, tail: Option<u32>) -> Result<ContainerLogs> {
         let args = self.protocol.logs_args(id, tail);
-        let (stdout, stderr) = self.exec_raw(&args).await?;
-        Ok(ContainerLogs { stdout, stderr })
+        let (stdout, stderr, exit_code) = self.exec_raw(&args).await?;
+        Ok(ContainerLogs { stdout, stderr, exit_code })
     }
 
     async fn wait_and_logs(&self, id: &str) -> Result<ContainerLogs> {
         let args = vec!["wait".into(), id.into()];
-        self.exec_raw(&args).await?;
-        self.logs(id, None).await
+        let (_, _, exit_code) = self.exec_raw(&args).await?;
+        let mut logs = self.logs(id, None).await?;
+        logs.exit_code = exit_code;
+        Ok(logs)
     }
 
     async fn exec(&self, id: &str, cmd: &[String], env: Option<&HashMap<String, String>>, workdir: Option<&str>) -> Result<ContainerLogs> {
         let args = self.protocol.exec_args(id, cmd, env, workdir);
-        let (stdout, stderr) = self.exec_raw(&args).await?;
-        Ok(ContainerLogs { stdout, stderr })
+        let (stdout, stderr, exit_code) = self.exec_raw(&args).await?;
+        Ok(ContainerLogs { stdout, stderr, exit_code })
     }
 
     async fn pull_image(&self, reference: &str) -> Result<()> {
@@ -438,7 +463,7 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
 
     async fn list_images(&self) -> Result<Vec<ImageInfo>> {
         let args = self.protocol.list_images_args();
-        let (stdout, _) = self.exec_raw(&args).await?;
+        let (stdout, _, _) = self.exec_raw(&args).await?;
         self.protocol.parse_list_images_output(&stdout)
     }
 
@@ -459,6 +484,11 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
         self.exec_raw(&args).await.map(|_| ())
     }
 
+    async fn build(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Result<()> {
+        let args = self.protocol.build_args(spec, image_name);
+        self.exec_raw(&args).await.map(|_| ())
+    }
+
     async fn create_volume(&self, name: &str, config: &VolumeConfig) -> Result<()> {
         // Implementation would convert VolumeConfig to CLI args
         let args = vec!["volume".into(), "create".into(), name.into()];
@@ -467,6 +497,16 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
 
     async fn remove_volume(&self, name: &str) -> Result<()> {
         let args = self.protocol.remove_volume_args(name);
+        self.exec_raw(&args).await.map(|_| ())
+    }
+
+    async fn inspect_network(&self, name: &str) -> Result<()> {
+        let args = self.protocol.inspect_network_args(name);
+        self.exec_raw(&args).await.map(|_| ())
+    }
+
+    async fn inspect_volume(&self, name: &str) -> Result<()> {
+        let args = self.protocol.inspect_volume_args(name);
         self.exec_raw(&args).await.map(|_| ())
     }
 }
@@ -497,7 +537,7 @@ pub async fn detect_backend() -> std::result::Result<Box<dyn ContainerBackend>, 
 
 fn platform_candidates() -> &'static [&'static str] {
     if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
-        &["apple/container", "orbstack", "colima", "rancher-desktop", "podman", "lima", "docker"]
+        &["apple/container", "orbstack", "colima", "rancher-desktop", "lima", "podman", "docker"]
     } else {
         &["podman", "nerdctl", "docker"]
     }

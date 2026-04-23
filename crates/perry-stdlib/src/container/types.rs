@@ -14,11 +14,11 @@ pub use perry_container_compose::types::{
 // ============ Handle Registry ============
 
 pub fn register_container_handle(h: ContainerHandle) -> u64 {
-    handle::register_handle(h) as u64
+    perry_runtime::JSValue::pointer(handle::register_handle(h) as *mut u8).bits()
 }
 
 pub fn get_container_handle(id: u64) -> Option<Handle> {
-    let h = id as Handle;
+    let h = (id & 0x0000_FFFF_FFFF_FFFF) as Handle;
     if handle::handle_exists(h) {
         Some(h)
     } else {
@@ -27,59 +27,68 @@ pub fn get_container_handle(id: u64) -> Option<Handle> {
 }
 
 pub fn register_container_info(info: ContainerInfo) -> u64 {
-    handle::register_handle(info) as u64
+    perry_runtime::JSValue::pointer(handle::register_handle(info) as *mut u8).bits()
 }
 
 pub fn register_container_info_list(list: Vec<ContainerInfo>) -> u64 {
-    handle::register_handle(list) as u64
+    perry_runtime::JSValue::pointer(handle::register_handle(list) as *mut u8).bits()
 }
 
 pub fn with_container_info_list<R>(id: u64, f: impl FnOnce(&Vec<ContainerInfo>) -> R) -> Option<R> {
-    handle::with_handle(id as Handle, f)
+    let h = (id & 0x0000_FFFF_FFFF_FFFF) as Handle;
+    handle::with_handle(h, f)
 }
 
 pub fn take_container_info_list(id: u64) -> Option<Vec<ContainerInfo>> {
-    handle::take_handle(id as Handle)
+    let h = (id & 0x0000_FFFF_FFFF_FFFF) as Handle;
+    handle::take_handle(h)
 }
 
-pub fn register_compose_handle(h: ComposeHandle) -> u64 {
-    handle::register_handle(h) as u64
+pub fn register_compose_engine(engine: perry_container_compose::ComposeEngine) -> u64 {
+    perry_runtime::JSValue::pointer(handle::register_handle(engine) as *mut u8).bits()
 }
 
-pub fn get_compose_handle(id: u64) -> Option<&'static ComposeHandle> {
-    handle::get_handle(id as Handle)
+pub fn get_compose_engine(id: u64) -> Option<&'static perry_container_compose::ComposeEngine> {
+    let h = (id & 0x0000_FFFF_FFFF_FFFF) as Handle;
+    handle::get_handle(h)
 }
 
-pub fn take_compose_handle(id: u64) -> Option<ComposeHandle> {
-    handle::take_handle(id as Handle)
+pub fn take_compose_engine(id: u64) -> Option<perry_container_compose::ComposeEngine> {
+    let h = (id & 0x0000_FFFF_FFFF_FFFF) as Handle;
+    handle::take_handle(h)
 }
 
 pub fn register_container_logs(logs: ContainerLogs) -> u64 {
-    handle::register_handle(logs) as u64
+    perry_runtime::JSValue::pointer(handle::register_handle(logs) as *mut u8).bits()
 }
 
 pub fn with_container_logs<R>(id: u64, f: impl FnOnce(&ContainerLogs) -> R) -> Option<R> {
-    handle::with_handle(id as Handle, f)
+    let h = (id & 0x0000_FFFF_FFFF_FFFF) as Handle;
+    handle::with_handle(h, f)
 }
 
 pub fn take_container_logs(id: u64) -> Option<ContainerLogs> {
-    handle::take_handle(id as Handle)
+    let h = (id & 0x0000_FFFF_FFFF_FFFF) as Handle;
+    handle::take_handle(h)
 }
 
 pub fn register_image_info_list(list: Vec<ImageInfo>) -> u64 {
-    handle::register_handle(list) as u64
+    perry_runtime::JSValue::pointer(handle::register_handle(list) as *mut u8).bits()
 }
 
 pub fn with_image_info_list<R>(id: u64, f: impl FnOnce(&Vec<ImageInfo>) -> R) -> Option<R> {
-    handle::with_handle(id as Handle, f)
+    let h = (id & 0x0000_FFFF_FFFF_FFFF) as Handle;
+    handle::with_handle(h, f)
 }
 
 pub fn take_image_info_list(id: u64) -> Option<Vec<ImageInfo>> {
-    handle::take_handle(id as Handle)
+    let h = (id & 0x0000_FFFF_FFFF_FFFF) as Handle;
+    handle::take_handle(h)
 }
 
 pub fn drop_container_handle(id: u64) -> bool {
-    handle::drop_handle(id as Handle)
+    let h = (id & 0x0000_FFFF_FFFF_FFFF) as Handle;
+    handle::drop_handle(h)
 }
 
 // ============ Error Types ============

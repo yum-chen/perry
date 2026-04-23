@@ -5475,7 +5475,11 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
                                     || module_name == "fs" || module_name == "node:fs"
                                     || module_name == "child_process" || module_name == "node:child_process"
                                     || module_name == "crypto" || module_name == "node:crypto"
-                                    || module_name == "os" || module_name == "node:os";
+                                    || module_name == "os" || module_name == "node:os"
+                                    || module_name == "perry/container"
+                                    || module_name == "perry/container-compose"
+                                    || module_name == "perry/compose";
+
                                 if !is_handled_module {
                                     // This is a call on a native module (e.g., mysql.createConnection)
                                     if let ast::MemberProp::Ident(method_ident) = &member.prop {

@@ -72,7 +72,7 @@ fn block<F: std::future::Future<Output = T>, T>(fut: F) -> T {
 // ──────────────────────────────────────────────────────────────
 
 #[no_mangle]
-pub unsafe extern "C" fn js_container_compose_up(spec_json_ptr: *const StringHeader) -> *const StringHeader {
+pub unsafe extern "C" fn standalone_js_container_compose_up(spec_json_ptr: *const StringHeader) -> *const StringHeader {
     let json = match string_from_header(spec_json_ptr) {
         Some(s) => s,
         None => return json_err("invalid spec JSON"),
@@ -97,7 +97,7 @@ pub unsafe extern "C" fn js_container_compose_up(spec_json_ptr: *const StringHea
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_container_compose_down(handle_id: i64, volumes: i32) -> *const StringHeader {
+pub unsafe extern "C" fn standalone_js_container_compose_down(handle_id: i64, volumes: i32) -> *const StringHeader {
     let engine = match ComposeEngine::get_engine(handle_id as u64) {
         Some(e) => e,
         None => return json_err("invalid handle"),
@@ -113,7 +113,7 @@ pub unsafe extern "C" fn js_container_compose_down(handle_id: i64, volumes: i32)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_container_compose_ps(handle_id: i64) -> *const StringHeader {
+pub unsafe extern "C" fn standalone_js_container_compose_ps(handle_id: i64) -> *const StringHeader {
     let engine = match ComposeEngine::get_engine(handle_id as u64) {
         Some(e) => e,
         None => return json_err("invalid handle"),
@@ -126,7 +126,7 @@ pub unsafe extern "C" fn js_container_compose_ps(handle_id: i64) -> *const Strin
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_container_compose_logs(
+pub unsafe extern "C" fn standalone_js_container_compose_logs(
     handle_id: i64,
     service_ptr: *const StringHeader,
     tail: i32,
@@ -146,7 +146,7 @@ pub unsafe extern "C" fn js_container_compose_logs(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_container_compose_exec(
+pub unsafe extern "C" fn standalone_js_container_compose_exec(
     handle_id: i64,
     service_ptr: *const StringHeader,
     cmd_json_ptr: *const StringHeader,
@@ -172,7 +172,7 @@ pub unsafe extern "C" fn js_container_compose_exec(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_container_compose_config(spec_json_ptr: *const StringHeader) -> *const StringHeader {
+pub unsafe extern "C" fn standalone_js_container_compose_config(spec_json_ptr: *const StringHeader) -> *const StringHeader {
     let json = match string_from_header(spec_json_ptr) {
         Some(s) => s,
         None => return json_err("invalid spec JSON"),
@@ -195,7 +195,7 @@ pub unsafe extern "C" fn js_container_compose_config(spec_json_ptr: *const Strin
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_container_compose_start(handle_id: i64, services_json_ptr: *const StringHeader) -> *const StringHeader {
+pub unsafe extern "C" fn standalone_js_container_compose_start(handle_id: i64, services_json_ptr: *const StringHeader) -> *const StringHeader {
     let engine = match ComposeEngine::get_engine(handle_id as u64) {
         Some(e) => e,
         None => return json_err("invalid handle"),
@@ -211,7 +211,7 @@ pub unsafe extern "C" fn js_container_compose_start(handle_id: i64, services_jso
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_container_compose_stop(handle_id: i64, services_json_ptr: *const StringHeader) -> *mut StringHeader {
+pub unsafe extern "C" fn standalone_js_container_compose_stop(handle_id: i64, services_json_ptr: *const StringHeader) -> *mut StringHeader {
     let engine = match ComposeEngine::get_engine(handle_id as u64) {
         Some(e) => e,
         None => return json_err("invalid handle") as *mut StringHeader,
@@ -227,7 +227,7 @@ pub unsafe extern "C" fn js_container_compose_stop(handle_id: i64, services_json
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_container_compose_restart(handle_id: i64, services_json_ptr: *const StringHeader) -> *mut StringHeader {
+pub unsafe extern "C" fn standalone_js_container_compose_restart(handle_id: i64, services_json_ptr: *const StringHeader) -> *mut StringHeader {
     let engine = match ComposeEngine::get_engine(handle_id as u64) {
         Some(e) => e,
         None => return json_err("invalid handle") as *mut StringHeader,
