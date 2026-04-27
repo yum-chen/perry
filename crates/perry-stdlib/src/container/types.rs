@@ -11,6 +11,8 @@ use dashmap::DashMap;
 // ============ Handle Management ============
 
 pub static CONTAINER_HANDLES: OnceLock<DashMap<u64, ContainerHandle>> = OnceLock::new();
+pub static CONTAINER_INFO_LISTS: OnceLock<DashMap<u64, Vec<ContainerInfo>>> = OnceLock::new();
+pub static CONTAINER_LOGS: OnceLock<DashMap<u64, ContainerLogs>> = OnceLock::new();
 pub static NEXT_HANDLE_ID: AtomicU64 = AtomicU64::new(1);
 
 pub fn register_container_handle(handle: ContainerHandle) -> u64 {
@@ -23,16 +25,28 @@ pub fn register_container_info(_info: ContainerInfo) -> u64 {
     NEXT_HANDLE_ID.fetch_add(1, Ordering::SeqCst)
 }
 
-pub fn register_container_info_list(_list: Vec<ContainerInfo>) -> u64 {
-    NEXT_HANDLE_ID.fetch_add(1, Ordering::SeqCst)
+pub fn register_container_info_list(list: Vec<ContainerInfo>) -> u64 {
+    let id = NEXT_HANDLE_ID.fetch_add(1, Ordering::SeqCst);
+    CONTAINER_INFO_LISTS.get_or_init(DashMap::new).insert(id, list);
+    id
+}
+
+pub fn take_container_info_list(id: u64) -> Option<Vec<ContainerInfo>> {
+    CONTAINER_INFO_LISTS.get()?.remove(&id).map(|(_, v)| v)
 }
 
 pub fn register_compose_handle(_handle: ComposeHandle) -> u64 {
     NEXT_HANDLE_ID.fetch_add(1, Ordering::SeqCst)
 }
 
-pub fn register_container_logs(_logs: ContainerLogs) -> u64 {
-    NEXT_HANDLE_ID.fetch_add(1, Ordering::SeqCst)
+pub fn register_container_logs(logs: ContainerLogs) -> u64 {
+    let id = NEXT_HANDLE_ID.fetch_add(1, Ordering::SeqCst);
+    CONTAINER_LOGS.get_or_init(DashMap::new).insert(id, logs);
+    id
+}
+
+pub fn take_container_logs(id: u64) -> Option<ContainerLogs> {
+    CONTAINER_LOGS.get()?.remove(&id).map(|(_, v)| v)
 }
 
 pub fn register_image_info_list(_list: Vec<ImageInfo>) -> u64 {

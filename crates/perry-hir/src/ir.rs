@@ -76,6 +76,8 @@ pub const NATIVE_MODULES: &[&str] = &[
     "url",
     // Utility libraries
     "lru-cache",
+    "mongodb",
+    "better-sqlite3",
     "commander",
     "decimal.js",
     "bignumber.js",

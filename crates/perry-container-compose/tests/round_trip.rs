@@ -59,9 +59,19 @@ fn arb_compose_spec() -> impl Strategy<Value = ComposeSpec> {
 }
 
 fn arb_service() -> impl Strategy<Value = ComposeService> {
-    any::<Option<String>>().prop_map(|image| {
+    (
+        any::<Option<String>>(),
+        prop::collection::vec(any::<String>(), 0..2),
+        prop::collection::hash_map(any::<String>(), any::<String>(), 0..2),
+    ).prop_map(|(image, ports, env)| {
         let mut svc = ComposeService::default();
         svc.image = image;
+        svc.ports = Some(ports.into_iter().map(|p| perry_container_compose::types::PortSpec::Short(serde_yaml::Value::String(p))).collect());
+        let mut env_map = indexmap::IndexMap::new();
+        for (k, v) in env {
+            env_map.insert(k, Some(serde_yaml::Value::String(v)));
+        }
+        svc.environment = Some(perry_container_compose::types::ListOrDict::Dict(env_map));
         svc
     })
 }
@@ -97,32 +107,79 @@ fn test_env_interpolation_manual() {
 }
 
 // Feature: perry-container, Property 2: ContainerSpec CLI argument round-trip
-#[test]
-fn test_container_spec_to_docker_args() {
-    use perry_container_compose::types::ContainerSpec;
-    use perry_container_compose::backend::DockerProtocol;
-    use perry_container_compose::backend::CliProtocol;
+proptest! {
+    #[test]
+    fn prop_container_spec_to_docker_args(spec in arb_container_spec()) {
+        use perry_container_compose::backend::{DockerProtocol, CliProtocol};
 
-    let mut env = std::collections::HashMap::new();
-    env.insert("K".to_string(), "V".to_string());
+        let protocol = DockerProtocol;
+        let args = protocol.run_args(&spec);
+        let args_str = args.join(" ");
 
-    let spec = ContainerSpec {
-        image: "nginx".into(),
-        name: Some("my-nginx".into()),
-        ports: Some(vec!["8080:80".into()]),
-        env: Some(env),
-        ..Default::default()
-    };
+        prop_assert!(args_str.contains("run -d"));
+        if let Some(name) = &spec.name {
+            prop_assert!(args_str.contains(&format!("--name {}", name)), "Expected --name {}", name);
+        }
+        if let Some(ports) = &spec.ports {
+            for port in ports {
+                prop_assert!(args_str.contains(&format!("-p {}", port)), "Expected -p {}", port);
+            }
+        }
+        if let Some(env) = &spec.env {
+            for (k, v) in env {
+                prop_assert!(args_str.contains(&format!("-e {}={}", k, v)), "Expected -e {}={}", k, v);
+            }
+        }
+        prop_assert!(args_str.contains(&spec.image));
+    }
+}
 
-    let protocol = DockerProtocol;
-    let args = protocol.run_args(&spec);
+// Feature: perry-container, Property 7: Compose file merge is last-writer-wins
+proptest! {
+    #[test]
+    fn prop_compose_spec_merge(mut spec_a in arb_compose_spec(), spec_b in arb_compose_spec()) {
+        let mut expected_services = spec_a.services.clone();
+        for (k, v) in &spec_b.services {
+            expected_services.insert(k.clone(), v.clone());
+        }
 
-    let args_str = args.join(" ");
-    assert!(args_str.contains("run -d"));
-    assert!(args_str.contains("--name my-nginx"));
-    assert!(args_str.contains("-p 8080:80"));
-    assert!(args_str.contains("-e K=V"));
-    assert!(args_str.contains("nginx"));
+        spec_a.merge(spec_b);
+
+        for (k, v) in expected_services {
+            let actual = spec_a.services.get(&k).unwrap();
+            prop_assert_eq!(&v.image, &actual.image);
+        }
+    }
+}
+
+fn arb_container_spec() -> impl Strategy<Value = perry_container_compose::types::ContainerSpec> {
+    any::<String>().prop_flat_map(|image| {
+        (
+            Just(image),
+            any::<Option<String>>(),
+            prop::collection::vec(any::<String>(), 0..3),
+            prop::collection::vec(any::<String>(), 0..3),
+            prop::collection::hash_map(any::<String>(), any::<String>(), 0..3),
+            any::<Option<Vec<String>>>(),
+            any::<Option<Vec<String>>>(),
+            any::<Option<String>>(),
+            any::<Option<bool>>(),
+        ).prop_map(|(image, name, ports, volumes, env, cmd, entrypoint, network, rm)| {
+            perry_container_compose::types::ContainerSpec {
+                image,
+                name,
+                ports: Some(ports),
+                volumes: Some(volumes),
+                env: Some(env),
+                labels: None,
+                cmd,
+                entrypoint,
+                network,
+                rm,
+                read_only: None,
+            }
+        })
+    })
 }
 
 fn arb_compose_spec_with_cycle() -> impl Strategy<Value = ComposeSpec> {

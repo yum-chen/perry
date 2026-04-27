@@ -356,29 +356,34 @@ pub unsafe extern "C" fn js_container_detectBackend() -> *mut Promise {
 
 #[no_mangle]
 pub unsafe extern "C" fn js_container_composeUp(spec_json_ptr: *const StringHeader) -> *mut Promise {
-    js_compose_up(spec_json_ptr)
+    js_container_compose_up(spec_json_ptr)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_up(spec_json_ptr: *const StringHeader) -> *mut Promise {
+pub unsafe extern "C" fn js_container_compose_up(spec_or_path_ptr: *const StringHeader) -> *mut Promise {
     let promise = js_promise_new();
-    let spec_json = match string_from_header(spec_json_ptr) {
+    let input = match string_from_header(spec_or_path_ptr) {
         Some(s) => s,
         None => {
-            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>(backend_err_to_js("Invalid spec JSON".into())) });
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>(backend_err_to_js("Invalid spec JSON or path".into())) });
             return promise;
         }
     };
-    let spec: ComposeSpec = match serde_json::from_str(&spec_json) {
-        Ok(s) => s,
-        Err(e) => {
-            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>(backend_err_to_js(e.to_string())) });
-            return promise;
-        }
-    };
+
     crate::common::spawn_for_promise(promise as *mut u8, async move {
         let backend = get_global_backend_instance().await.map_err(backend_err_to_js)?;
-        let wrapper = compose::compose_up(spec, backend).await.map_err(compose_error_to_js)?;
+
+        let wrapper = if input.trim().starts_with('{') {
+            // Treat as JSON spec
+            let spec: ComposeSpec = serde_json::from_str(&input).map_err(|e| backend_err_to_js(e.to_string()))?;
+            compose::compose_up(spec, backend).await.map_err(compose_error_to_js)?
+        } else {
+            // Treat as file path
+            let config = perry_container_compose::config::ProjectConfig::new(vec![std::path::PathBuf::from(input)], None, vec![]);
+            let project = perry_container_compose::project::ComposeProject::load(&config).map_err(compose_error_to_js)?;
+            compose::compose_up(project.spec, backend).await.map_err(compose_error_to_js)?
+        };
+
         let id = wrapper.engine.up(&[], false, false, false).await.map_err(compose_error_to_js)?.stack_id;
         COMPOSE_ENGINES.get_or_init(DashMap::new).insert(id, wrapper.clone());
         Ok(id)
@@ -387,7 +392,7 @@ pub unsafe extern "C" fn js_compose_up(spec_json_ptr: *const StringHeader) -> *m
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_down(stack_id: i64, volumes: i32) -> *mut Promise {
+pub unsafe extern "C" fn js_container_compose_down(stack_id: i64, volumes: i32) -> *mut Promise {
     let promise = js_promise_new();
     let id = stack_id as u64;
     crate::common::spawn_for_promise(promise as *mut u8, async move {
@@ -404,7 +409,7 @@ pub unsafe extern "C" fn js_compose_down(stack_id: i64, volumes: i32) -> *mut Pr
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_ps(stack_id: i64) -> *mut Promise {
+pub unsafe extern "C" fn js_container_compose_ps(stack_id: i64) -> *mut Promise {
     let promise = js_promise_new();
     let id = stack_id as u64;
     crate::common::spawn_for_promise(promise as *mut u8, async move {
@@ -418,7 +423,7 @@ pub unsafe extern "C" fn js_compose_ps(stack_id: i64) -> *mut Promise {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_logs(stack_id: i64, service_ptr: *const StringHeader, tail: i32) -> *mut Promise {
+pub unsafe extern "C" fn js_container_compose_logs(stack_id: i64, service_ptr: *const StringHeader, tail: i32) -> *mut Promise {
     let promise = js_promise_new();
     let id = stack_id as u64;
     let service = string_from_header(service_ptr);
@@ -437,7 +442,7 @@ pub unsafe extern "C" fn js_compose_logs(stack_id: i64, service_ptr: *const Stri
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_exec(stack_id: i64, service_ptr: *const StringHeader, cmd_json_ptr: *const StringHeader) -> *mut Promise {
+pub unsafe extern "C" fn js_container_compose_exec(stack_id: i64, service_ptr: *const StringHeader, cmd_json_ptr: *const StringHeader) -> *mut Promise {
     let promise = js_promise_new();
     let id = stack_id as u64;
     let service = match string_from_header(service_ptr) {
@@ -461,7 +466,7 @@ pub unsafe extern "C" fn js_compose_exec(stack_id: i64, service_ptr: *const Stri
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_config(spec_json_ptr: *const StringHeader) -> *mut Promise {
+pub unsafe extern "C" fn js_container_compose_config(spec_json_ptr: *const StringHeader) -> *mut Promise {
     let promise = js_promise_new();
     let spec_json = string_from_header(spec_json_ptr).unwrap_or_else(|| "{}".into());
     crate::common::spawn_for_promise(promise as *mut u8, async move {
@@ -471,7 +476,7 @@ pub unsafe extern "C" fn js_compose_config(spec_json_ptr: *const StringHeader) -
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_start(stack_id: i64, services_json_ptr: *const StringHeader) -> *mut Promise {
+pub unsafe extern "C" fn js_container_compose_start(stack_id: i64, services_json_ptr: *const StringHeader) -> *mut Promise {
     let promise = js_promise_new();
     let id = stack_id as u64;
     let services_json = string_from_header(services_json_ptr).unwrap_or_else(|| "[]".into());
@@ -487,7 +492,7 @@ pub unsafe extern "C" fn js_compose_start(stack_id: i64, services_json_ptr: *con
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_stop(stack_id: i64, services_json_ptr: *const StringHeader) -> *mut Promise {
+pub unsafe extern "C" fn js_container_compose_stop(stack_id: i64, services_json_ptr: *const StringHeader) -> *mut Promise {
     let promise = js_promise_new();
     let id = stack_id as u64;
     let services_json = string_from_header(services_json_ptr).unwrap_or_else(|| "[]".into());
@@ -503,7 +508,7 @@ pub unsafe extern "C" fn js_compose_stop(stack_id: i64, services_json_ptr: *cons
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_restart(stack_id: i64, services_json_ptr: *const StringHeader) -> *mut Promise {
+pub unsafe extern "C" fn js_container_compose_restart(stack_id: i64, services_json_ptr: *const StringHeader) -> *mut Promise {
     let promise = js_promise_new();
     let id = stack_id as u64;
     let services_json = string_from_header(services_json_ptr).unwrap_or_else(|| "[]".into());

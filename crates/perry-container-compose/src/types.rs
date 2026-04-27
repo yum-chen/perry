@@ -8,6 +8,32 @@ pub enum ListOrDict {
     List(Vec<String>),
 }
 
+impl ListOrDict {
+    pub fn to_map(&self) -> std::collections::HashMap<String, String> {
+        let mut res = std::collections::HashMap::new();
+        match self {
+            ListOrDict::Dict(dict) => {
+                for (k, v) in dict {
+                    let val_str = v.as_ref()
+                        .map(|val| serde_yaml::to_string(val).unwrap_or_default().trim().to_string())
+                        .unwrap_or_default();
+                    res.insert(k.clone(), val_str);
+                }
+            }
+            ListOrDict::List(list) => {
+                for entry in list {
+                    if let Some((k, v)) = entry.split_once('=') {
+                        res.insert(k.to_string(), v.to_string());
+                    } else {
+                        res.insert(entry.clone(), String::new());
+                    }
+                }
+            }
+        }
+        res
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DependsOnCondition {
