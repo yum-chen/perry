@@ -127,9 +127,10 @@ pub async fn run(cli: Cli) -> Result<()> {
         cli.env_files.clone(),
     );
     let project = ComposeProject::load(&config)?;
-    let backend = crate::backend::detect_backend()
+    let driver = crate::backend::detect_backend()
         .await
         .map_err(|probed| crate::error::ComposeError::NoBackendFound { probed })?;
+    let backend = driver.to_backend();
     let engine = std::sync::Arc::new(ComposeEngine::new(project.spec.clone(), project.project_name.clone(), backend));
 
     match cli.command {

@@ -4197,7 +4197,7 @@ dependencies = [
 
 [[package]]
 name = "perry-container-compose"
-version = "0.5.326"
+version = "0.5.328"
 dependencies = [
  "anyhow",
  "async-trait",

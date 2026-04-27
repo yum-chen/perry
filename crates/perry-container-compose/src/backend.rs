@@ -32,6 +32,68 @@ pub struct VolumeConfig {
     pub labels: HashMap<String, String>,
 }
 
+/// Execution strategy for the container backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionStrategy {
+    CliExec,
+    ApiSocket,
+    VmSpawn,
+}
+
+/// Supported container backend drivers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackendDriver {
+    AppleContainer { bin: PathBuf },
+    Orbstack { bin: PathBuf },
+    Colima { bin: PathBuf },
+    RancherDesktop { bin: PathBuf },
+    Podman { bin: PathBuf },
+    Lima { bin: PathBuf, instance: String },
+    Nerdctl { bin: PathBuf },
+    Docker { bin: PathBuf },
+}
+
+impl BackendDriver {
+    pub fn name(&self) -> &'static str {
+        match self {
+            BackendDriver::AppleContainer { .. } => "apple/container",
+            BackendDriver::Orbstack { .. } => "orbstack",
+            BackendDriver::Colima { .. } => "colima",
+            BackendDriver::RancherDesktop { .. } => "rancher-desktop",
+            BackendDriver::Podman { .. } => "podman",
+            BackendDriver::Lima { .. } => "lima",
+            BackendDriver::Nerdctl { .. } => "nerdctl",
+            BackendDriver::Docker { .. } => "docker",
+        }
+    }
+
+    pub fn bin(&self) -> &Path {
+        match self {
+            BackendDriver::AppleContainer { bin }
+            | BackendDriver::Orbstack { bin }
+            | BackendDriver::Colima { bin }
+            | BackendDriver::RancherDesktop { bin }
+            | BackendDriver::Podman { bin }
+            | BackendDriver::Lima { bin, .. }
+            | BackendDriver::Nerdctl { bin }
+            | BackendDriver::Docker { bin } => bin,
+        }
+    }
+
+    pub fn to_backend(&self) -> Arc<dyn ContainerBackend + Send + Sync> {
+        let bin = self.bin().to_path_buf();
+        match self {
+            BackendDriver::AppleContainer { .. } => {
+                Arc::new(CliBackend::new(bin, AppleContainerProtocol))
+            }
+            BackendDriver::Lima { instance, .. } => {
+                Arc::new(CliBackend::new(bin, LimaProtocol { instance: instance.clone() }))
+            }
+            _ => Arc::new(CliBackend::new(bin, DockerProtocol)),
+        }
+    }
+}
+
 /// Layer 1: The public contract — what operations exist, completely runtime-agnostic.
 #[async_trait]
 pub trait ContainerBackend: Send + Sync {
@@ -695,9 +757,9 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
 }
 
 /// Detect the available container backend.
-pub async fn detect_backend() -> std::result::Result<Arc<dyn ContainerBackend + Send + Sync>, Vec<BackendProbeResult>> {
+pub async fn detect_backend() -> std::result::Result<BackendDriver, Vec<BackendProbeResult>> {
     if let Ok(name) = std::env::var("PERRY_CONTAINER_BACKEND") {
-        return probe_candidate(&name).await.map_err(|reason| {
+        return probe_driver(&name).await.map_err(|reason| {
             vec![BackendProbeResult {
                 name,
                 available: false,
@@ -710,15 +772,14 @@ pub async fn detect_backend() -> std::result::Result<Arc<dyn ContainerBackend + 
     let mode = std::env::var("PERRY_CONTAINER_MODE").unwrap_or_else(|_| "local-first".to_string());
     if mode == "server-first" {
         // In server-first mode, we would typically check DOCKER_HOST etc first.
-        // For now we preserve the priority order but this is where the dispatch logic lives.
     }
 
     let candidates = platform_candidates();
     let mut results = Vec::new();
 
     for candidate in candidates {
-        match tokio::time::timeout(Duration::from_secs(2), probe_candidate(candidate)).await {
-            Ok(Ok(backend)) => return Ok(backend),
+        match tokio::time::timeout(Duration::from_secs(2), probe_driver(candidate)).await {
+            Ok(Ok(driver)) => return Ok(driver),
             Ok(Err(reason)) => results.push(BackendProbeResult {
                 name: candidate.to_string(),
                 available: false,
@@ -754,50 +815,50 @@ fn platform_candidates() -> &'static [&'static str] {
     }
 }
 
-async fn probe_candidate(name: &str) -> std::result::Result<Arc<dyn ContainerBackend + Send + Sync>, String> {
+async fn probe_driver(name: &str) -> std::result::Result<BackendDriver, String> {
     match name {
         "apple/container" => {
             let bin = which::which("container").map_err(|_| "binary not found".to_string())?;
-            let backend = CliBackend::new(bin, AppleContainerProtocol);
+            let backend = CliBackend::new(bin.clone(), AppleContainerProtocol);
             backend.check_available().await.map_err(|e| e.to_string())?;
-            Ok(Arc::new(backend))
+            Ok(BackendDriver::AppleContainer { bin })
         }
         "podman" => {
             let bin = which::which("podman").map_err(|_| "binary not found".to_string())?;
             if cfg!(target_os = "macos") {
                 check_podman_machine_running(&bin).await?;
             }
-            let backend = CliBackend::new(bin, DockerProtocol);
+            let backend = CliBackend::new(bin.clone(), DockerProtocol);
             backend.check_available().await.map_err(|e| e.to_string())?;
-            Ok(Arc::new(backend))
+            Ok(BackendDriver::Podman { bin })
         }
         "docker" => {
             let bin = which::which("docker").map_err(|_| "binary not found".to_string())?;
-            let backend = CliBackend::new(bin, DockerProtocol);
+            let backend = CliBackend::new(bin.clone(), DockerProtocol);
             backend.check_available().await.map_err(|e| e.to_string())?;
-            Ok(Arc::new(backend))
+            Ok(BackendDriver::Docker { bin })
         }
         "orbstack" => {
             let bin = which::which("orb")
                 .or_else(|_| which::which("docker"))
                 .map_err(|_| "binary not found".to_string())?;
             check_orbstack_socket_or_version(&bin).await?;
-            let backend = CliBackend::new(bin, DockerProtocol);
+            let backend = CliBackend::new(bin.clone(), DockerProtocol);
             backend.check_available().await.map_err(|e| e.to_string())?;
-            Ok(Arc::new(backend))
+            Ok(BackendDriver::Orbstack { bin })
         }
         "nerdctl" => {
             let bin = which::which("nerdctl").map_err(|_| "binary not found".to_string())?;
-            let backend = CliBackend::new(bin, DockerProtocol);
+            let backend = CliBackend::new(bin.clone(), DockerProtocol);
             backend.check_available().await.map_err(|e| e.to_string())?;
-            Ok(Arc::new(backend))
+            Ok(BackendDriver::Nerdctl { bin })
         }
         "lima" => {
             let bin = which::which("limactl").map_err(|_| "binary not found".to_string())?;
             let instance = check_lima_running_instance(&bin).await?;
-            let backend = CliBackend::new(bin, LimaProtocol { instance });
+            let backend = CliBackend::new(bin.clone(), LimaProtocol { instance: instance.clone() });
             backend.check_available().await.map_err(|e| e.to_string())?;
-            Ok(Arc::new(backend))
+            Ok(BackendDriver::Lima { bin, instance })
         }
         "colima" => {
             let bin = which::which("colima").map_err(|_| "binary not found".to_string())?;
@@ -805,14 +866,14 @@ async fn probe_candidate(name: &str) -> std::result::Result<Arc<dyn ContainerBac
             let docker_bin = which::which("docker").map_err(|_| "docker binary not found".to_string())?;
             let backend = CliBackend::new(docker_bin, DockerProtocol);
             backend.check_available().await.map_err(|e| e.to_string())?;
-            Ok(Arc::new(backend))
+            Ok(BackendDriver::Colima { bin })
         }
         "rancher-desktop" => {
             let bin = which::which("nerdctl").map_err(|_| "nerdctl binary not found".to_string())?;
             check_rancher_socket().await?;
-            let backend = CliBackend::new(bin, DockerProtocol);
+            let backend = CliBackend::new(bin.clone(), DockerProtocol);
             backend.check_available().await.map_err(|e| e.to_string())?;
-            Ok(Arc::new(backend))
+            Ok(BackendDriver::RancherDesktop { bin })
         }
         _ => Err("unknown backend".into()),
     }

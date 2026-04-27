@@ -71,9 +71,9 @@ fn parse_compose_file(file_ptr: *const StringHeader) -> Option<PathBuf> {
 fn make_engine(files: Vec<PathBuf>) -> Result<Arc<ComposeEngine>, String> {
     let proj = crate::project::ComposeProject::load_from_files(&files, None, &[])
         .map_err(|e| e.to_string())?;
-    let backend: Arc<dyn crate::backend::ContainerBackend> = block(crate::backend::detect_backend())
-        .map(Arc::from)
-        .map_err(|e| e.to_string())?;
+    let backend = block(crate::backend::detect_backend())
+        .map(|driver| driver.to_backend())
+        .map_err(|probed| format!("No backend found: {:?}", probed))?;
     Ok(Arc::new(ComposeEngine::new(proj.spec, proj.project_name, backend)))
 }
 
@@ -98,7 +98,7 @@ pub unsafe extern "C" fn js_compose_stop(file_ptr: *const StringHeader) -> *cons
     let files: Vec<PathBuf> = parse_compose_file(file_ptr).into_iter().collect();
     match make_engine(files) {
         Err(e) => json_err(&e),
-        Ok(engine) => match block(engine.down(false, false)) {
+        Ok(engine) => match block(engine.down(&[], false, false)) {
             Ok(_) => json_ok("null"),
             Err(e) => json_err(&e.to_string()),
         },
@@ -136,18 +136,24 @@ pub unsafe extern "C" fn js_compose_logs(
     _follow: bool,
 ) -> *const StringHeader {
     let files: Vec<PathBuf> = parse_compose_file(file_ptr).into_iter().collect();
-    let service: Option<String> = string_from_header(services_ptr)
+    let services: Vec<String> = string_from_header(services_ptr)
         .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
-        .and_then(|v| v.into_iter().next());
+        .unwrap_or_default();
 
     match make_engine(files) {
         Err(e) => json_err(&e),
-        Ok(engine) => match block(engine.logs(service.as_deref(), None)) {
+        Ok(engine) => match block(engine.logs(&services, None)) {
             Err(e) => json_err(&e.to_string()),
-            Ok(logs) => {
-                let stdout = logs.stdout.replace('"', "\\\"").replace('\n', "\\n");
-                let stderr = logs.stderr.replace('"', "\\\"").replace('\n', "\\n");
-                let payload = format!("{{\"stdout\":\"{}\",\"stderr\":\"{}\"}}", stdout, stderr);
+            Ok(logs_map) => {
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+                for (svc, logs) in logs_map {
+                    stdout.push_str(&format!("[{}] {}\n", svc, logs.stdout));
+                    stderr.push_str(&format!("[{}] {}\n", svc, logs.stderr));
+                }
+                let stdout_esc = stdout.replace('"', "\\\"").replace('\n', "\\n");
+                let stderr_esc = stderr.replace('"', "\\\"").replace('\n', "\\n");
+                let payload = format!("{{\"stdout\":\"{}\",\"stderr\":\"{}\"}}", stdout_esc, stderr_esc);
                 json_ok(&payload)
             }
         },

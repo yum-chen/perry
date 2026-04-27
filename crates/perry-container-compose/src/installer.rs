@@ -65,7 +65,7 @@ impl BackendInstaller {
 
             println!("{}", style("Installation completed. Verifying...").green());
             match detect_backend().await {
-                Ok(backend) => Ok(backend),
+                Ok(driver) => Ok(driver.to_backend()),
                 Err(_) => Err(ComposeError::validation("Installation finished but backend still not detected. Please install manually.")),
             }
         } else {
