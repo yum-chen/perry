@@ -728,6 +728,11 @@ pub struct ContainerSpec {
     pub read_only: Option<bool>,
     pub seccomp: Option<String>,
     pub labels: Option<std::collections::HashMap<String, String>>,
+    pub cap_add: Option<Vec<String>>,
+    pub cap_drop: Option<Vec<String>>,
+    pub user: Option<String>,
+    pub privileged: Option<bool>,
+    pub workdir: Option<String>,
 }
 
 /// Handle returned after creating/running a container.

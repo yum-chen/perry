@@ -9,6 +9,20 @@ pub const CHAINGUARD_IDENTITY: &str =
 pub const CHAINGUARD_ISSUER: &str =
     "https://token.actions.githubusercontent.com";
 
+pub struct VerificationConfig {
+    pub identity: String,
+    pub issuer: String,
+}
+
+impl Default for VerificationConfig {
+    fn default() -> Self {
+        Self {
+            identity: CHAINGUARD_IDENTITY.to_string(),
+            issuer: CHAINGUARD_ISSUER.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum VerificationResult {
     Verified,
@@ -23,12 +37,15 @@ pub async fn fetch_image_digest(reference: &str) -> Result<String, String> {
     Ok(info.id)
 }
 
-pub async fn run_cosign_verify(reference: &str, digest: &str) -> VerificationResult {
+pub async fn run_cosign_verify(reference: &str, digest: &str, config: Option<&VerificationConfig>) -> VerificationResult {
+    let default_config = VerificationConfig::default();
+    let config = config.unwrap_or(&default_config);
+
     let output = tokio::process::Command::new("cosign")
         .args([
             "verify",
-            "--certificate-identity", CHAINGUARD_IDENTITY,
-            "--certificate-oidc-issuer", CHAINGUARD_ISSUER,
+            "--certificate-identity", &config.identity,
+            "--certificate-oidc-issuer", &config.issuer,
             &format!("{}@{}", reference, digest),
         ])
         .output()
@@ -58,7 +75,7 @@ pub async fn verify_image(reference: &str) -> Result<String, String> {
     }
 
     // 3. Run cosign verify
-    let result = run_cosign_verify(reference, &digest).await;
+    let result = run_cosign_verify(reference, &digest, None).await;
 
     // 4. Cache result
     {

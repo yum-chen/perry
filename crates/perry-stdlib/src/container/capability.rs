@@ -32,6 +32,8 @@ pub async fn perry_container_run_capability(
         read_only: Some(true),
         env: grants.env.clone(),
         cmd: Some(cmd.iter().map(|s| s.to_string()).collect()),
+        cap_drop: Some(vec!["ALL".to_string()]),
+        user: Some("nobody".to_string()),
         ..Default::default()
     };
 
@@ -50,6 +52,11 @@ pub async fn perry_container_run_capability(
         read_only: spec.read_only,
         labels: spec.labels,
         seccomp: spec.seccomp,
+        cap_add: spec.cap_add,
+        cap_drop: spec.cap_drop,
+        user: spec.user,
+        privileged: spec.privileged,
+        workdir: spec.workdir,
     }).await.map_err(|e| e.to_string())?;
 
     // 4. Wait for completion and collect output

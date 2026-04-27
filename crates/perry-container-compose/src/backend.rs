@@ -429,6 +429,28 @@ pub fn docker_run_flags(spec: &ContainerSpec, include_detach: bool) -> Vec<Strin
     if spec.read_only.unwrap_or(false) {
         args.push("--read-only".into());
     }
+    if spec.privileged.unwrap_or(false) {
+        args.push("--privileged".into());
+    }
+    if let Some(user) = &spec.user {
+        args.extend(["--user".into(), user.clone()]);
+    }
+    if let Some(wd) = &spec.workdir {
+        args.extend(["--workdir".into(), wd.clone()]);
+    }
+    if let Some(caps) = &spec.cap_add {
+        for cap in caps {
+            args.extend(["--cap-add".into(), cap.clone()]);
+        }
+    }
+    if let Some(caps) = &spec.cap_drop {
+        for cap in caps {
+            args.extend(["--cap-drop".into(), cap.clone()]);
+        }
+    }
+    if let Some(seccomp) = &spec.seccomp {
+        args.extend(["--security-opt".into(), format!("seccomp={}", seccomp)]);
+    }
     if let Some(ep) = &spec.entrypoint {
         args.extend(["--entrypoint".into(), ep.join(" ")]);
     }
