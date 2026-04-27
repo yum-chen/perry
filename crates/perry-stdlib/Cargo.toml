@@ -74,6 +74,7 @@ async-runtime = ["dep:tokio"]
 
 [dependencies]
 perry-runtime = { workspace = true, features = ["stdlib"] }
+proptest = { version = "1.2", optional = true }
 perry-container-compose = { path = "../perry-container-compose", optional = true }
 
 thiserror.workspace = true

@@ -93,6 +93,13 @@ pub fn get_default_base_image() -> &'static str {
     "cgr.dev/chainguard/alpine-base"
 }
 
+pub fn clear_verification_cache() {
+    if let Some(cache) = VERIFICATION_CACHE.get() {
+        let mut cache_write = cache.write().unwrap();
+        cache_write.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -90,6 +90,8 @@ pub unsafe fn string_from_header(header: *const StringHeader) -> Option<String> 
     if header.is_null() || (header as usize) < 0x1000 {
         return None;
     }
-    let s = (*header).as_str();
-    Some(s.to_string())
+    let blen = (*header).byte_len as usize;
+    let data = (header as *const u8).add(std::mem::size_of::<StringHeader>());
+    let bytes = std::slice::from_raw_parts(data, blen);
+    Some(String::from_utf8_lossy(bytes).into_owned())
 }
