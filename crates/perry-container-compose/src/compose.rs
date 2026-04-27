@@ -26,8 +26,10 @@ pub struct ComposeEngine {
     pub spec: ComposeSpec,
     pub project_name: String,
     pub backend: Arc<dyn ContainerBackend>,
-    /// Services that were started in this session
-    started_containers: std::sync::Mutex<Vec<String>>,
+    /// Resources that were created in this session
+    pub session_containers: std::sync::Mutex<Vec<String>>,
+    pub session_networks: std::sync::Mutex<Vec<String>>,
+    pub session_volumes: std::sync::Mutex<Vec<String>>,
 }
 
 impl ComposeEngine {
@@ -41,12 +43,14 @@ impl ComposeEngine {
             spec,
             project_name,
             backend,
-            started_containers: std::sync::Mutex::new(Vec::new()),
+            session_containers: std::sync::Mutex::new(Vec::new()),
+            session_networks: std::sync::Mutex::new(Vec::new()),
+            session_volumes: std::sync::Mutex::new(Vec::new()),
         }
     }
 
     /// Register this engine in the global registry and return a handle.
-    fn register(&self) -> ComposeHandle {
+    fn register(self: Arc<Self>) -> ComposeHandle {
         let stack_id = NEXT_STACK_ID.fetch_add(1, Ordering::SeqCst);
         let services: Vec<String> = self.spec.services.keys().cloned().collect();
         let handle = ComposeHandle {
@@ -54,17 +58,7 @@ impl ComposeEngine {
             project_name: self.project_name.clone(),
             services,
         };
-        let engines = COMPOSE_ENGINES.lock().unwrap();
-        // Note: can't insert self while holding a reference, so we re-acquire later
-        drop(engines);
-        COMPOSE_ENGINES
-            .lock()
-            .unwrap()
-            .insert(stack_id, Arc::new(ComposeEngine::new(
-                self.spec.clone(),
-                self.project_name.clone(),
-                Arc::clone(&self.backend),
-            )));
+        COMPOSE_ENGINES.lock().unwrap().insert(stack_id, self);
         handle
     }
 
@@ -85,7 +79,7 @@ impl ComposeEngine {
     /// Creates networks and volumes first, then starts containers.
     /// On failure, rolls back all previously started containers.
     pub async fn up(
-        &self,
+        self: Arc<Self>,
         services: &[String],
         _detach: bool,
         _build: bool,
@@ -101,7 +95,6 @@ impl ComposeEngine {
         };
 
         // 1. Create networks (skip external)
-        let mut created_networks = Vec::new();
         if let Some(networks) = &self.spec.networks {
             for (net_name, net_config_opt) in networks {
                 let external = net_config_opt
@@ -124,18 +117,17 @@ impl ComposeEngine {
                 };
                 tracing::info!("Creating network '{}'…", resolved_name);
                 if let Err(e) = self.backend.create_network(resolved_name, &config).await {
-                    self.rollback(&[], &created_networks, &[]).await;
+                    self.rollback().await;
                     return Err(ComposeError::ServiceStartupFailed {
                         service: format!("network/{}", net_name),
                         message: e.to_string(),
                     });
                 }
-                created_networks.push(resolved_name.to_string());
+                self.session_networks.lock().unwrap().push(resolved_name.to_string());
             }
         }
 
         // 2. Create volumes (skip external)
-        let mut created_volumes = Vec::new();
         if let Some(volumes) = &self.spec.volumes {
             for (vol_name, vol_config_opt) in volumes {
                 let external = vol_config_opt
@@ -156,19 +148,17 @@ impl ComposeEngine {
                 };
                 tracing::info!("Creating volume '{}'…", resolved_name);
                 if let Err(e) = self.backend.create_volume(resolved_name, &config).await {
-                    self.rollback(&[], &created_networks, &created_volumes).await;
+                    self.rollback().await;
                     return Err(ComposeError::ServiceStartupFailed {
                         service: format!("volume/{}", vol_name),
                         message: e.to_string(),
                     });
                 }
-                created_volumes.push(resolved_name.to_string());
+                self.session_volumes.lock().unwrap().push(resolved_name.to_string());
             }
         }
 
         // 3. Start services in dependency order
-        let mut started = Vec::new();
-
         for svc_name in target {
             let svc = self
                 .spec
@@ -177,36 +167,54 @@ impl ComposeEngine {
                 .ok_or_else(|| ComposeError::NotFound(svc_name.clone()))?;
 
             if let Err(e) = crate::orchestrate::orchestrate_service(svc, svc_name, &*self.backend).await {
-                self.rollback(&started, &created_networks, &created_volumes).await;
+                self.rollback().await;
                 return Err(ComposeError::ServiceStartupFailed {
                     service: svc_name.clone(),
                     message: e.to_string(),
                 });
             }
-            started.push(service::service_container_name(svc, svc_name));
+            let container_name = service::service_container_name(svc, svc_name);
+            self.session_containers.lock().unwrap().push(container_name);
         }
-
-        // Record started containers
-        self.started_containers.lock().unwrap().extend(started);
 
         // Register and return handle
         Ok(self.register())
     }
 
 
-    async fn rollback(&self, started: &[String], networks: &[String], volumes: &[String]) {
+    async fn rollback(&self) {
         tracing::info!("Rolling back partial startup…");
         // Stop and remove containers in reverse order
-        for container_name in started.iter().rev() {
+        let containers = {
+            let mut l = self.session_containers.lock().unwrap();
+            let c = l.clone();
+            l.clear();
+            c
+        };
+        for container_name in containers.iter().rev() {
             let _ = self.backend.stop(container_name, None).await;
             let _ = self.backend.remove(container_name, true).await;
         }
-        // Remove networks
-        for net_name in networks {
+
+        // Remove networks in reverse order
+        let networks = {
+            let mut l = self.session_networks.lock().unwrap();
+            let n = l.clone();
+            l.clear();
+            n
+        };
+        for net_name in networks.iter().rev() {
             let _ = self.backend.remove_network(net_name).await;
         }
-        // Remove volumes
-        for vol_name in volumes {
+
+        // Remove volumes in reverse order
+        let volumes = {
+            let mut l = self.session_volumes.lock().unwrap();
+            let v = l.clone();
+            l.clear();
+            v
+        };
+        for vol_name in volumes.iter().rev() {
             let _ = self.backend.remove_volume(vol_name).await;
         }
     }
@@ -220,61 +228,87 @@ impl ComposeEngine {
         _remove_orphans: bool,
         remove_volumes: bool,
     ) -> Result<()> {
-        let mut order = resolve_startup_order(&self.spec)?;
-        order.reverse();
-
-        let target: Vec<&String> = if services.is_empty() {
-            order.iter().collect()
-        } else {
-            order.iter().filter(|s| services.contains(s)).collect()
-        };
-
         // 1. Stop and remove containers
-        for svc_name in target {
-            let svc = self
-                .spec
-                .services
-                .get(svc_name)
-                .ok_or_else(|| ComposeError::NotFound(svc_name.clone()))?;
+        if services.is_empty() {
+            let containers = {
+                let mut l = self.session_containers.lock().unwrap();
+                let c = l.clone();
+                l.clear();
+                c
+            };
+            for container_name in containers.iter().rev() {
+                let _ = self.backend.stop(container_name, None).await;
+                let _ = self.backend.remove(container_name, true).await;
+            }
+        } else {
+            let mut order = resolve_startup_order(&self.spec)?;
+            order.reverse();
+            let target: Vec<&String> = order.iter().filter(|s| services.contains(*s)).collect();
 
-            let container_name = service::service_container_name(svc, svc_name);
-            let inspect_result = self.backend.inspect(&container_name).await;
+            for svc_name in target {
+                let svc = self
+                    .spec
+                    .services
+                    .get(svc_name)
+                    .ok_or_else(|| ComposeError::NotFound(svc_name.clone()))?;
 
-            if let Ok(info) = inspect_result {
-                if info.status == "running" {
-                    self.backend.stop(&container_name, None).await?;
-                }
-                self.backend.remove(&container_name, true).await?;
+                let container_name = service::service_container_name(svc, svc_name);
+                let _ = self.backend.stop(&container_name, None).await;
+                let _ = self.backend.remove(&container_name, true).await;
+                self.session_containers.lock().unwrap().retain(|c| c != &container_name);
             }
         }
 
-        // 2. Remove networks (non-external, idempotent)
-        if let Some(networks) = &self.spec.networks {
-            for (net_name, net_config_opt) in networks {
-                let external = net_config_opt.as_ref().map_or(false, |c| c.external.unwrap_or(false));
-                if external {
-                    continue;
-                }
-                let resolved_name = net_config_opt.as_ref()
-                    .and_then(|c| c.name.as_deref())
-                    .unwrap_or(net_name.as_str());
-                let _ = self.backend.remove_network(resolved_name).await;
-            }
-        }
-
-        // 3. Remove volumes (if requested)
-        if remove_volumes {
-            if let Some(volumes) = &self.spec.volumes {
-                for (vol_name, vol_config_opt) in volumes {
-                    let external = vol_config_opt.as_ref().map_or(false, |c| c.external.unwrap_or(false));
-                    if external {
-                        continue;
+        // 2. Remove networks
+        let networks = if services.is_empty() {
+            let mut l = self.session_networks.lock().unwrap();
+            let n = l.clone();
+            l.clear();
+            n
+        } else {
+            // Best effort: remove all non-external networks defined in spec
+            let mut n = Vec::new();
+            if let Some(nets) = &self.spec.networks {
+                for (net_name, net_config_opt) in nets {
+                    let external = net_config_opt.as_ref().map_or(false, |c| c.external.unwrap_or(false));
+                    if !external {
+                        let resolved_name = net_config_opt.as_ref()
+                            .and_then(|c| c.name.as_deref())
+                            .unwrap_or(net_name.as_str());
+                        n.push(resolved_name.to_string());
                     }
-                    let resolved_name = vol_config_opt.as_ref()
-                        .and_then(|c| c.name.as_deref())
-                        .unwrap_or(vol_name.as_str());
-                    let _ = self.backend.remove_volume(resolved_name).await;
                 }
+            }
+            n
+        };
+        for net_name in networks.iter().rev() {
+            let _ = self.backend.remove_network(&net_name).await;
+        }
+
+        // 3. Remove volumes
+        if remove_volumes {
+            let volumes = if services.is_empty() {
+                let mut l = self.session_volumes.lock().unwrap();
+                let v = l.clone();
+                l.clear();
+                v
+            } else {
+                let mut v = Vec::new();
+                if let Some(vols) = &self.spec.volumes {
+                    for (vol_name, vol_config_opt) in vols {
+                        let external = vol_config_opt.as_ref().map_or(false, |c| c.external.unwrap_or(false));
+                        if !external {
+                            let resolved_name = vol_config_opt.as_ref()
+                                .and_then(|c| c.name.as_deref())
+                                .unwrap_or(vol_name.as_str());
+                            v.push(resolved_name.to_string());
+                        }
+                    }
+                }
+                v
+            };
+            for vol_name in volumes.iter().rev() {
+                let _ = self.backend.remove_volume(&vol_name).await;
             }
         }
 
@@ -600,10 +634,10 @@ mod tests_v4 {
     // Feature: alloy-container, Property 9: Container name generation uniqueness
     proptest! {
         #[test]
-        fn test_container_name_uniqueness(img1 in ".*", svc1 in ".*", img2 in ".*", svc2 in ".*") {
-            prop_assume!(img1 != img2 || svc1 != svc2);
-            let n1 = service::generate_name(&img1, &svc1);
-            let n2 = service::generate_name(&img2, &svc2);
+        fn test_container_name_uniqueness(img1 in ".*", img2 in ".*") {
+            prop_assume!(img1 != img2);
+            let n1 = service::generate_name(&img1);
+            let n2 = service::generate_name(&img2);
             // Due to random suffix, they should be different even if img/svc are same,
             // but we explicitly assume different inputs here to test general case.
             assert_ne!(n1, n2);
@@ -624,7 +658,7 @@ impl WorkloadGraphEngine {
         // In a real implementation, parse spec_json to WorkloadGraph,
         // convert to ComposeSpec, then call ComposeEngine::up.
         let spec: ComposeSpec = serde_json::from_str(spec_json).map_err(ComposeError::JsonError)?;
-        let engine = ComposeEngine::new(spec, "workload".to_string(), Arc::clone(&self.backend));
+        let engine = Arc::new(ComposeEngine::new(spec, "workload".to_string(), Arc::clone(&self.backend)));
         let handle = engine.up(&[], true, false, false).await?;
         Ok(handle.stack_id)
     }

@@ -11,12 +11,12 @@ use dashmap::DashMap;
 pub async fn compose_up(spec: ComposeSpec) -> Result<ComposeHandle, String> {
     let backend = get_global_backend_instance().await.map_err(|e| e.to_string())?;
     let project_name = spec.name.clone().unwrap_or_else(|| "default".to_string());
-    let engine = ComposeEngine::new(spec, project_name, Arc::clone(&backend) as Arc<dyn perry_container_compose::ContainerBackend>);
+    let engine = Arc::new(ComposeEngine::new(spec, project_name, Arc::clone(&backend) as Arc<dyn perry_container_compose::ContainerBackend>));
 
-    let handle = engine.up(&[], true, false, false).await.map_err(|e| e.to_string())?;
+    let handle = Arc::clone(&engine).up(&[], true, false, false).await.map_err(|e| e.to_string())?;
 
     // We need to store the engine to perform operations on the handle later
-    COMPOSE_HANDLES.get_or_init(DashMap::new).insert(handle.stack_id, ArcComposeEngine(Arc::new(engine)));
+    COMPOSE_HANDLES.get_or_init(DashMap::new).insert(handle.stack_id, ArcComposeEngine(engine));
 
     Ok(handle)
 }

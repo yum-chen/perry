@@ -6,21 +6,12 @@ use perry_container_compose::types::ComposeService;
 // Feature: perry-container | Layer: unit | Req: 6.13 | Property: -
 #[test]
 fn test_generate_name_format() {
-    let name = generate_name("nginx:latest", "web");
-    let parts: Vec<&str> = name.split('_').collect();
-    // {service_name}_{short_hash}{random_suffix_hex}
+    let name = generate_name("nginx:latest");
+    let parts: Vec<&str> = name.split('-').collect();
+    // {short_hash}-{random_suffix_hex}
     assert_eq!(parts.len(), 2);
-    assert_eq!(parts[0], "web");
-    assert_eq!(parts[1].len(), 16);
-}
-
-// Feature: perry-container | Layer: unit | Req: 6.13 | Property: -
-#[test]
-fn test_generate_name_sanitization() {
-    let name = generate_name("img", "my.service");
-    // Format: {safe_name}_{hash+random}
-    // "my.service" becomes "my_service"
-    assert!(name.starts_with("my_service_"));
+    assert_eq!(parts[0].len(), 8);
+    assert_eq!(parts[1].len(), 8);
 }
 
 // Feature: perry-container | Layer: unit | Req: 6.13 | Property: -
@@ -37,7 +28,9 @@ fn test_service_container_name_explicit() {
 fn test_service_container_name_generated() {
     let svc = ComposeService::default();
     let name = service_container_name(&svc, "web");
-    assert!(name.starts_with("web_"));
+    // Should be {hash}-{random}
+    let parts: Vec<&str> = name.split('-').collect();
+    assert_eq!(parts.len(), 2);
 }
 
 /*

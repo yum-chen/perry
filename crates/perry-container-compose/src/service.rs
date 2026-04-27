@@ -4,31 +4,32 @@ use crate::backend::ContainerBackend;
 use crate::error::Result;
 use crate::types::{ComposeService, ContainerSpec};
 use md5::{Digest, Md5};
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Global counter for deterministic random suffixes in debug mode.
+static DEBUG_RANDOM_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// Generate a unique container name for a service.
 ///
-/// Format: {safe_name}_{short_hash}{random_suffix_hex}
-/// e.g. web_a1b2c3d4f0e1d2c3
-pub fn generate_name(image: &str, service_name: &str) -> String {
-    // MD5 hash of the image name for a stable prefix
+/// Format: {md5_8chars}-{random_hex8}
+/// e.g. a3f2b1c9-00e4f2a1
+pub fn generate_name(input: &str) -> String {
+    // MD5 hash of the input (service YAML or image name) for a stable prefix
     let mut hasher = Md5::new();
-    hasher.update(image.as_bytes());
+    hasher.update(input.as_bytes());
     let hash = hasher.finalize();
     let hash_str = hex::encode(hash);
     let short_hash = &hash_str[..8];
 
-    // Use a fixed random seed for tests to allow predictable naming if needed,
-    // but here we just want to avoid the random suffix in tests for easier matching
-    // if we were to control it.
-    let random_suffix: u32 = if cfg!(debug_assertions) { 0 } else { rand::random() };
+    // Use an atomic counter in debug mode to avoid collisions during development
+    // while maintaining predictability for tests and logs.
+    let random_suffix: u32 = if cfg!(debug_assertions) {
+        DEBUG_RANDOM_COUNTER.fetch_add(1, Ordering::SeqCst)
+    } else {
+        rand::random()
+    };
 
-    // Sanitize service name: replace non-alphanumeric (except hyphen) with underscore
-    let safe_name: String = service_name
-        .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
-        .collect();
-
-    format!("{}_{}{:08x}", safe_name, short_hash, random_suffix)
+    format!("{}-{:08x}", short_hash, random_suffix)
 }
 
 /// Service runtime state tracking.
@@ -58,8 +59,9 @@ pub fn service_container_name(svc: &ComposeService, service_name: &str) -> Strin
         return explicit.to_string();
     }
 
-    let image = svc.image.as_deref().unwrap_or(service_name);
-    generate_name(image, service_name)
+    // Spec C2: Use MD5 of service YAML (fallback to image ref)
+    let input = serde_yaml::to_string(svc).unwrap_or_else(|_| svc.image_ref(service_name));
+    generate_name(&input)
 }
 
 impl ComposeService {
@@ -134,21 +136,11 @@ mod tests {
 
     #[test]
     fn test_generate_name_format() {
-        let name = generate_name("nginx:latest", "web");
-        // Format: {safe_name}_{short_hash}{random_suffix_hex}
-        let parts: Vec<&str> = name.split('_').collect();
-        assert_eq!(parts[0], "web");
-        assert_eq!(parts[1].len(), 16); // 8 hash + 8 random
-    }
-
-    #[test]
-    fn test_same_image_same_hash_prefix() {
-        let name1 = generate_name("nginx:latest", "web");
-        let name2 = generate_name("nginx:latest", "api");
-        // Same image -> same hash prefix
-        let hash1 = &name1[name1.find('_').unwrap() + 1..name1.find('_').unwrap() + 9];
-        let hash2 = &name2[name2.find('_').unwrap() + 1..name2.find('_').unwrap() + 9];
-        assert_eq!(hash1, hash2, "same image must produce same hash prefix");
+        let name = generate_name("nginx:latest");
+        // Format: {md5_8chars}-{random_hex8}
+        let parts: Vec<&str> = name.split('-').collect();
+        assert_eq!(parts[0].len(), 8);
+        assert_eq!(parts[1].len(), 8);
     }
 
     #[test]
@@ -157,11 +149,5 @@ mod tests {
         svc.container_name = Some("my-container".to_string());
         let name = service_container_name(&svc, "web");
         assert_eq!(name, "my-container");
-    }
-
-    #[test]
-    fn test_sanitize_service_name() {
-        let name = generate_name("img", "my.service");
-        assert!(name.starts_with("my_service_"), "dots should be replaced");
     }
 }
