@@ -50,6 +50,20 @@ export interface ContainerHandle {
 export function run(spec: ContainerSpec): Promise<ContainerHandle>;
 
 /**
+ * Build a container image from a spec.
+ * @param spec Build configuration
+ * @param imageName Name to tag the built image with
+ */
+export function build(
+  spec: {
+    context?: string;
+    dockerfile?: string;
+    args?: Record<string, string>;
+  },
+  imageName: string
+): Promise<void>;
+
+/**
  * Create a container from the given spec without starting it.
  * @param spec Container configuration
  * @returns Promise resolving to ContainerHandle

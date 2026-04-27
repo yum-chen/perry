@@ -2708,6 +2708,10 @@ fn lower_module_decl(
                                                             ("pg", "connect") => Some("Client"),
                                                             ("http" | "https", "request" | "get") => Some("ClientRequest"),
                                                             ("axios", "get" | "post" | "put" | "delete" | "patch" | "request") => Some("Response"),
+                                                            ("perry/workloads", "runGraph") => Some("WorkloadHandle"),
+                                                            ("perry/container", "run" | "create") => Some("ContainerHandle"),
+                                                            ("perry/container", "composeUp") => Some("ComposeHandle"),
+                                                            ("perry/container-compose", "up") => Some("ComposeHandle"),
                                                             _ => None,
                                                         };
                                                         if let Some(class_name) = class_name {
@@ -4607,7 +4611,7 @@ pub(crate) fn lower_expr(ctx: &mut LoweringContext, expr: &ast::Expr) -> Result<
             } else if let Some(id) = ctx.lookup_func(&name) {
                 Ok(Expr::FuncRef(id))
             } else if let Some((module_name, method_name)) = ctx.lookup_native_module(&name) {
-                if module_name == "perry/container" || module_name == "perry/compose" || module_name == "perry/container-compose" {
+                if module_name == "perry/container" || module_name == "perry/compose" || module_name == "perry/container-compose" || module_name == "perry/workloads" {
                     if let Some(method) = method_name {
                         return Ok(Expr::NativeMethodCall {
                             module: module_name.to_string(),

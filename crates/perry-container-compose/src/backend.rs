@@ -41,8 +41,10 @@ pub trait ContainerBackend: Send + Sync {
     async fn pull_image(&self, reference: &str) -> Result<()>;
     async fn list_images(&self) -> Result<Vec<ImageInfo>>;
     async fn remove_image(&self, reference: &str, force: bool) -> Result<()>;
+    async fn build(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Result<()>;
     async fn create_network(&self, name: &str, config: &NetworkConfig) -> Result<()>;
     async fn remove_network(&self, name: &str) -> Result<()>;
+    async fn inspect_network(&self, name: &str) -> Result<()>;
     async fn create_volume(&self, name: &str, config: &VolumeConfig) -> Result<()>;
     async fn remove_volume(&self, name: &str) -> Result<()>;
 }
@@ -328,6 +330,20 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
         Ok(())
     }
 
+    async fn build(&self, spec: &crate::types::ComposeServiceBuild, image_name: &str) -> Result<()> {
+        let mut args = vec!["build".into(), "-t".into(), image_name.into()];
+        if let Some(ctx) = &spec.context {
+            args.push(ctx.clone());
+        } else {
+            args.push(".".into());
+        }
+        if let Some(df) = &spec.dockerfile {
+            args.extend(["-f".into(), df.clone()]);
+        }
+        self.exec_ok(args).await?;
+        Ok(())
+    }
+
     async fn create_network(&self, name: &str, config: &NetworkConfig) -> Result<()> {
         self.exec_ok(self.protocol.create_network_args(name, config)).await?;
         Ok(())
@@ -335,6 +351,11 @@ impl<P: CliProtocol + Send + Sync> ContainerBackend for CliBackend<P> {
 
     async fn remove_network(&self, name: &str) -> Result<()> {
         self.exec_ok(self.protocol.remove_network_args(name)).await?;
+        Ok(())
+    }
+
+    async fn inspect_network(&self, name: &str) -> Result<()> {
+        self.exec_ok(vec!["network".into(), "inspect".into(), name.into()]).await?;
         Ok(())
     }
 

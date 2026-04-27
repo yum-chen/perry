@@ -4571,6 +4571,9 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
         runtime: "js_bcrypt_compare", args: &[NA_F64, NA_F64], ret: NR_PTR },
 
     // ========== Container Module ==========
+    NativeModSig { module: "perry/container", has_receiver: false, method: "build",
+        class_filter: None,
+        runtime: "js_container_build", args: &[NA_STR, NA_STR], ret: NR_PTR },
     NativeModSig { module: "perry/container", has_receiver: false, method: "run",
         class_filter: None,
         runtime: "js_container_run", args: &[NA_STR], ret: NR_PTR },
@@ -4616,6 +4619,14 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
     NativeModSig { module: "perry/container", has_receiver: false, method: "composeUp",
         class_filter: None,
         runtime: "js_container_composeUp", args: &[NA_STR], ret: NR_PTR },
+
+    // ========== Workloads Module ==========
+    NativeModSig { module: "perry/workloads", has_receiver: false, method: "runGraph",
+        class_filter: None,
+        runtime: "js_workload_runGraph", args: &[NA_STR, NA_STR], ret: NR_PTR },
+    NativeModSig { module: "perry/workloads", has_receiver: true, method: "status",
+        class_filter: None,
+        runtime: "js_workload_handle_status", args: &[], ret: NR_PTR },
 
     // ========== Container Compose Module ==========
     NativeModSig { module: "perry/compose", has_receiver: false, method: "up",

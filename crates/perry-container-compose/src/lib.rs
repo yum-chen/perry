@@ -4,6 +4,7 @@ pub mod yaml;
 pub mod project;
 pub mod service;
 pub mod compose;
+pub mod workload;
 pub mod backend;
 pub mod cli;
 pub mod config;

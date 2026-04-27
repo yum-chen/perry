@@ -17,63 +17,16 @@ impl ComposeEngine {
         Self { spec, backend }
     }
 
-    pub fn resolve_startup_order(spec: &ComposeSpec) -> Result<Vec<String>> {
-        let mut in_degree: IndexMap<String, usize> = IndexMap::new();
-        let mut dependents: IndexMap<String, Vec<String>> = IndexMap::new();
+    pub fn resolve_startup_order(&self) -> Result<Vec<String>> {
+        resolve_startup_order(&self.spec)
+    }
 
-        for name in spec.services.keys() {
-            in_degree.insert(name.clone(), 0);
-            dependents.insert(name.clone(), Vec::new());
-        }
-
-        for (name, service) in &spec.services {
-            if let Some(deps) = &service.depends_on {
-                for dep in deps.service_names() {
-                    if !spec.services.contains_key(&dep) {
-                        return Err(ComposeError::ValidationError {
-                            message: format!("Service '{}' depends on '{}' which is not defined", name, dep)
-                        });
-                    }
-                    *in_degree.get_mut(name).unwrap() += 1;
-                    dependents.get_mut(&dep).unwrap().push(name.clone());
-                }
-            }
-        }
-
-        let mut queue: BTreeSet<String> = in_degree
-            .iter()
-            .filter(|(_, &deg)| deg == 0)
-            .map(|(name, _)| name.clone())
-            .collect();
-
-        let mut order: Vec<String> = Vec::new();
-        while let Some(service) = queue.pop_first() {
-            order.push(service.clone());
-            if let Some(deps) = dependents.get(&service) {
-                for dependent in deps {
-                    let deg = in_degree.get_mut(dependent).unwrap();
-                    *deg -= 1;
-                    if *deg == 0 {
-                        queue.insert(dependent.clone());
-                    }
-                }
-            }
-        }
-
-        if order.len() != spec.services.len() {
-            let cycle_services: Vec<String> = in_degree
-                .iter()
-                .filter(|(_, &deg)| deg > 0)
-                .map(|(name, _)| name.clone())
-                .collect();
-            return Err(ComposeError::DependencyCycle { services: cycle_services });
-        }
-
-        Ok(order)
+    pub fn resolve_startup_order_static(spec: &ComposeSpec) -> Result<Vec<String>> {
+        resolve_startup_order(spec)
     }
 
     pub async fn up(&self) -> Result<ComposeHandle> {
-        let order = Self::resolve_startup_order(&self.spec)?;
+        let order = resolve_startup_order(&self.spec)?;
         let mut created_networks = Vec::new();
         let mut created_volumes = Vec::new();
         let mut started_containers: Vec<(String, ContainerHandle)> = Vec::new();
@@ -175,7 +128,7 @@ impl ComposeEngine {
     }
 
     pub async fn down(&self, volumes: bool) -> Result<()> {
-        let order = Self::resolve_startup_order(&self.spec)?;
+        let order = resolve_startup_order(&self.spec)?;
         for service_name in order.iter().rev() {
              let _ = self.backend.remove(service_name, true).await;
         }
@@ -227,4 +180,59 @@ impl ComposeEngine {
         }
         Ok(())
     }
+}
+
+pub fn resolve_startup_order(spec: &ComposeSpec) -> Result<Vec<String>> {
+    let mut in_degree: IndexMap<String, usize> = IndexMap::new();
+    let mut dependents: IndexMap<String, Vec<String>> = IndexMap::new();
+
+    for name in spec.services.keys() {
+        in_degree.insert(name.clone(), 0);
+        dependents.insert(name.clone(), Vec::new());
+    }
+
+    for (name, service) in &spec.services {
+        if let Some(deps) = &service.depends_on {
+            for dep in deps.service_names() {
+                if !spec.services.contains_key(&dep) {
+                    return Err(ComposeError::ValidationError {
+                        message: format!("Service '{}' depends on '{}' which is not defined", name, dep)
+                    });
+                }
+                *in_degree.get_mut(name).unwrap() += 1;
+                dependents.get_mut(&dep).unwrap().push(name.clone());
+            }
+        }
+    }
+
+    let mut queue: BTreeSet<String> = in_degree
+        .iter()
+        .filter(|(_, &deg)| deg == 0)
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    let mut order: Vec<String> = Vec::new();
+    while let Some(service) = queue.pop_first() {
+        order.push(service.clone());
+        if let Some(deps) = dependents.get(&service) {
+            for dependent in deps {
+                let deg = in_degree.get_mut(dependent).unwrap();
+                *deg -= 1;
+                if *deg == 0 {
+                    queue.insert(dependent.clone());
+                }
+            }
+        }
+    }
+
+    if order.len() != spec.services.len() {
+        let cycle_services: Vec<String> = in_degree
+            .iter()
+            .filter(|(_, &deg)| deg > 0)
+            .map(|(name, _)| name.clone())
+            .collect();
+        return Err(ComposeError::DependencyCycle { services: cycle_services });
+    }
+
+    Ok(order)
 }

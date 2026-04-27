@@ -13,13 +13,16 @@ pub use types::{
 };
 
 use perry_runtime::{js_promise_new, Promise, StringHeader};
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, atomic::{AtomicU64, Ordering}};
 use dashmap::DashMap;
 use perry_container_compose::compose::ComposeEngine;
+use perry_container_compose::workload::{WorkloadGraphEngine, WorkloadGraph, RunOptions, GraphHandle};
 use crate::container::backend::get_global_backend_instance;
 
 static CONTAINER_HANDLES: OnceLock<DashMap<u64, ContainerHandle>> = OnceLock::new();
 static COMPOSE_HANDLES: OnceLock<DashMap<u64, ComposeEngine>> = OnceLock::new();
+static WORKLOAD_HANDLES: OnceLock<DashMap<u64, GraphHandle>> = OnceLock::new();
 static NEXT_HANDLE_ID: AtomicU64 = AtomicU64::new(1);
 
 fn get_next_id() -> u64 {
@@ -57,6 +60,212 @@ pub unsafe extern "C" fn js_container_detectBackend() -> *mut Promise {
             }
         }
     });
+    promise
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_handle_down(handle_id: f64, _opts_json_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
+    let handle = match WORKLOAD_HANDLES.get_or_init(DashMap::new).get(&(handle_id as u64)) {
+        Some(h) => h.clone(),
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>("Workload handle not found".into()) });
+            return promise;
+        }
+    };
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let backend = get_global_backend_instance().await.map_err(|e| e.to_string())?;
+        for name in handle.graph.nodes.keys() {
+            let _ = backend.stop(name, None).await;
+            let _ = backend.remove(name, true).await;
+        }
+        Ok(0u64)
+    });
+    promise
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_handle_logs(handle_id: f64, node_name_ptr: *const StringHeader, opts_json_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
+    let node_name = match string_from_header(node_name_ptr) {
+        Some(s) => s,
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>("Invalid node name".into()) });
+            return promise;
+        }
+    };
+    let tail = string_from_header(opts_json_ptr).and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v["tail"].as_u64().map(|n| n as u32));
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let backend = get_global_backend_instance().await.map_err(|e| e.to_string())?;
+        let logs = backend.logs(&node_name, tail).await.map_err(|e| e.to_string())?;
+        let json = serde_json::to_string(&logs).unwrap_or_default();
+        Ok(perry_runtime::js_string_from_bytes(json.as_ptr(), json.len() as u32) as u64)
+    });
+    promise
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_handle_exec(handle_id: f64, node_name_ptr: *const StringHeader, cmd_json_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
+    let node_name = match string_from_header(node_name_ptr) {
+        Some(s) => s,
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>("Invalid node name".into()) });
+            return promise;
+        }
+    };
+    let cmd_json = match string_from_header(cmd_json_ptr) {
+        Some(s) => s,
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>("Invalid cmd JSON".into()) });
+            return promise;
+        }
+    };
+    let cmd: Vec<String> = match serde_json::from_str(&cmd_json) {
+        Ok(c) => c,
+        Err(e) => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>(e.to_string()) });
+            return promise;
+        }
+    };
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let backend = get_global_backend_instance().await.map_err(|e| e.to_string())?;
+        let logs = backend.exec(&node_name, &cmd, None, None).await.map_err(|e| e.to_string())?;
+        let json = serde_json::to_string(&logs).unwrap_or_default();
+        Ok(perry_runtime::js_string_from_bytes(json.as_ptr(), json.len() as u32) as u64)
+    });
+    promise
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_handle_ps(handle_id: f64) -> *mut Promise {
+    let promise = js_promise_new();
+    let handle = match WORKLOAD_HANDLES.get_or_init(DashMap::new).get(&(handle_id as u64)) {
+        Some(h) => h.clone(),
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>("Workload handle not found".into()) });
+            return promise;
+        }
+    };
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let backend = get_global_backend_instance().await.map_err(|e| e.to_string())?;
+        let mut ps = Vec::new();
+        for name in handle.graph.nodes.keys() {
+             if let Ok(info) = backend.inspect(name).await {
+                 ps.push(info);
+             }
+        }
+        let json = serde_json::to_string(&ps).unwrap_or_default();
+        Ok(perry_runtime::js_string_from_bytes(json.as_ptr(), json.len() as u32) as u64)
+    });
+    promise
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_runGraph(graph_json_ptr: *const StringHeader, opts_json_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
+    let graph_json = match string_from_header(graph_json_ptr) {
+        Some(s) => s,
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>("Invalid graph JSON".into()) });
+            return promise;
+        }
+    };
+    let opts_json = match string_from_header(opts_json_ptr) {
+        Some(s) => s,
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>("Invalid opts JSON".into()) });
+            return promise;
+        }
+    };
+
+    let graph: WorkloadGraph = match serde_json::from_str(&graph_json) {
+        Ok(g) => g,
+        Err(e) => {
+            let msg = e.to_string();
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>(msg) });
+            return promise;
+        }
+    };
+    let opts: RunOptions = match serde_json::from_str(&opts_json) {
+        Ok(o) => o,
+        Err(e) => {
+            let msg = e.to_string();
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>(msg) });
+            return promise;
+        }
+    };
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let backend = get_global_backend_instance().await.map_err(|e| e.to_string())?;
+        let engine = WorkloadGraphEngine::new(backend);
+        let handle = engine.run(&graph, &opts).await.map_err(|e| e.to_string())?;
+        let id = handle.id;
+        WORKLOAD_HANDLES.get_or_init(DashMap::new).insert(id, handle);
+        Ok(id)
+    });
+
+    promise
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_workload_handle_status(handle_id: f64) -> *mut Promise {
+    let promise = js_promise_new();
+    let handle = match WORKLOAD_HANDLES.get_or_init(DashMap::new).get(&(handle_id as u64)) {
+        Some(h) => h.clone(),
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>("Workload handle not found".into()) });
+            return promise;
+        }
+    };
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let backend = get_global_backend_instance().await.map_err(|e| e.to_string())?;
+        let mut statuses = HashMap::new();
+        for name in handle.graph.nodes.keys() {
+             let info = backend.inspect(name).await.map(|i| i.status).unwrap_or_else(|_| "unknown".into());
+             statuses.insert(name.clone(), info);
+        }
+        let json = serde_json::to_string(&statuses).unwrap_or_default();
+        Ok(perry_runtime::js_string_from_bytes(json.as_ptr(), json.len() as u32) as u64)
+    });
+    promise
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn js_container_build(spec_json_ptr: *const StringHeader, image_name_ptr: *const StringHeader) -> *mut Promise {
+    let promise = js_promise_new();
+    let spec_json = match string_from_header(spec_json_ptr) {
+        Some(s) => s,
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>("Invalid spec JSON".into()) });
+            return promise;
+        }
+    };
+    let image_name = match string_from_header(image_name_ptr) {
+        Some(s) => s,
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>("Invalid image name".into()) });
+            return promise;
+        }
+    };
+
+    let spec: perry_container_compose::types::ComposeServiceBuild = match serde_json::from_str(&spec_json) {
+        Ok(s) => s,
+        Err(e) => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move { Err::<u64, String>(e.to_string()) });
+            return promise;
+        }
+    };
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let backend = get_global_backend_instance().await.map_err(|e| e.to_string())?;
+        backend.build(&spec, &image_name).await.map_err(|e| e.to_string())?;
+        Ok(0u64)
+    });
+
     promise
 }
 
@@ -278,7 +487,7 @@ pub unsafe extern "C" fn js_container_logs(id_ptr: *const StringHeader, tail: f6
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_container_exec(id_ptr: *const StringHeader, cmd_json_ptr: *const StringHeader, _env_json_ptr: *const StringHeader, _workdir_ptr: *const StringHeader) -> *mut Promise {
+pub unsafe extern "C" fn js_container_exec(id_ptr: *const StringHeader, cmd_json_ptr: *const StringHeader, env_json_ptr: *const StringHeader, workdir_ptr: *const StringHeader) -> *mut Promise {
     let promise = js_promise_new();
     let id = match string_from_header(id_ptr) {
         Some(s) => s,
@@ -307,9 +516,14 @@ pub unsafe extern "C" fn js_container_exec(id_ptr: *const StringHeader, cmd_json
             return promise;
         }
     };
+
+    let env_json = string_from_header(env_json_ptr);
+    let env: Option<HashMap<String, String>> = env_json.and_then(|s| serde_json::from_str(&s).ok());
+    let workdir = string_from_header(workdir_ptr);
+
     crate::common::spawn_for_promise(promise as *mut u8, async move {
         let backend = get_global_backend_instance().await.map_err(|e| e.to_string())?;
-        let logs = backend.exec(&id, &cmd, None, None).await.map_err(|e| e.to_string())?;
+        let logs = backend.exec(&id, &cmd, env.as_ref(), workdir.as_deref()).await.map_err(|e| e.to_string())?;
         let mapped = ContainerLogs { stdout: logs.stdout, stderr: logs.stderr };
         let json = serde_json::to_string(&mapped).unwrap_or_default();
         Ok(perry_runtime::js_string_from_bytes(json.as_ptr(), json.len() as u32) as u64)
@@ -481,7 +695,7 @@ pub unsafe extern "C" fn js_compose_logs(handle_id: f64, service_ptr: *const Str
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_exec(handle_id: f64, service_ptr: *const StringHeader, cmd_json_ptr: *const StringHeader) -> *mut Promise {
+pub unsafe extern "C" fn js_compose_exec(handle_id: f64, service_ptr: *const StringHeader, cmd_json_ptr: *const StringHeader, _opts_json_ptr: *const StringHeader) -> *mut Promise {
     let promise = js_promise_new();
     let engine = match COMPOSE_HANDLES.get_or_init(DashMap::new).get(&(handle_id as u64)) {
         Some(e) => e.clone(),
