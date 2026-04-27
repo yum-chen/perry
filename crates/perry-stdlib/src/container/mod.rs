@@ -14,7 +14,6 @@ use perry_runtime::{js_promise_new, Promise, StringHeader, JSValue};
 use std::sync::{Arc, OnceLock};
 use crate::container::types::*;
 use crate::common::spawn_for_promise_deferred;
-use dashmap::DashMap;
 
 pub(crate) mod mod_private {
     use super::*;
@@ -751,8 +750,8 @@ pub unsafe extern "C" fn js_container_module_init() {
 #[no_mangle]
 pub unsafe extern "C" fn js_container_compose_graph(handle_id: f64) -> *const StringHeader {
     let id = handle_id as u64;
-    let json = if let Some(engine) = COMPOSE_HANDLES.get_or_init(DashMap::new).get(&id) {
-        if let Ok(graph) = engine.0.graph() {
+    let json = if let Some(engine) = ComposeEngine::get_engine(id) {
+        if let Ok(graph) = engine.graph() {
             serde_json::to_string(&graph).unwrap_or_else(|_| "{}".to_string())
         } else {
             "{}".to_string()
@@ -768,9 +767,7 @@ pub unsafe extern "C" fn js_container_compose_status(handle_id: f64) -> *mut Pro
     let promise = js_promise_new();
     let id = handle_id as u64;
     spawn_for_promise_deferred(promise as *mut u8, async move {
-        let engine = COMPOSE_HANDLES.get_or_init(DashMap::new)
-            .get(&id)
-            .map(|e| Arc::clone(&e.0))
+        let engine = ComposeEngine::get_engine(id)
             .ok_or_else(|| format!("Compose stack {} not found", id))?;
         engine.status().await.map_err(|e| e.to_string())
     }, |status| {

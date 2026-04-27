@@ -17,20 +17,11 @@ pub struct ContainerHandle {
 }
 
 pub static CONTAINER_HANDLES: OnceLock<DashMap<u64, ContainerHandle>> = OnceLock::new();
-pub static COMPOSE_HANDLES: OnceLock<DashMap<u64, ArcComposeEngine>> = OnceLock::new();
 pub static NEXT_HANDLE_ID: AtomicU64 = AtomicU64::new(1);
-
-pub struct ArcComposeEngine(pub std::sync::Arc<ComposeEngine>);
 
 pub fn register_container_handle(handle: ContainerHandle) -> u64 {
     let id = NEXT_HANDLE_ID.fetch_add(1, Ordering::SeqCst);
     CONTAINER_HANDLES.get_or_init(DashMap::new).insert(id, handle);
-    id
-}
-
-pub fn register_compose_handle(engine: ComposeEngine) -> u64 {
-    let id = NEXT_HANDLE_ID.fetch_add(1, Ordering::SeqCst);
-    COMPOSE_HANDLES.get_or_init(DashMap::new).insert(id, ArcComposeEngine(std::sync::Arc::new(engine)));
     id
 }
 
@@ -86,10 +77,12 @@ pub struct ComposeHandle {
 
 // ============ Helper for StringHeader ============
 
-pub unsafe fn string_from_header(header: *const StringHeader) -> Option<String> {
-    if header.is_null() || (header as usize) < 0x1000 {
+pub unsafe fn string_from_header(ptr: *const StringHeader) -> Option<String> {
+    if ptr.is_null() || (ptr as usize) < 0x1000 {
         return None;
     }
-    let s = (*header).as_str();
-    Some(s.to_string())
+    let len = (*ptr).byte_len as usize;
+    let data_ptr = (ptr as *const u8).add(std::mem::size_of::<StringHeader>());
+    let bytes = std::slice::from_raw_parts(data_ptr, len);
+    Some(String::from_utf8_lossy(bytes).into_owned())
 }

@@ -56,6 +56,32 @@ export interface Service {
   command?: string | string[];
   /** Networks this service is attached to */
   networks?: string[];
+  /** Healthcheck configuration */
+  healthcheck?: ComposeHealthcheck;
+  /** Mount the container root as read-only */
+  read_only?: boolean;
+  /** Custom seccomp profile path */
+  seccomp?: string;
+  /** Secrets to expose to the service */
+  secrets?: string[];
+  /** Configs to expose to the service */
+  configs?: string[];
+}
+
+/**
+ * Healthcheck configuration.
+ */
+export interface ComposeHealthcheck {
+  /** Test command (string or array) */
+  test: string | string[];
+  /** Check interval (e.g., "30s") */
+  interval?: string;
+  /** Timeout (e.g., "10s") */
+  timeout?: string;
+  /** Number of retries before unhealthy */
+  retries?: number;
+  /** Startup grace period (e.g., "40s") */
+  start_period?: string;
 }
 
 /**
@@ -80,10 +106,38 @@ export interface ComposeVolume {
  * Root Compose file structure (docker-compose.yaml / compose.yaml).
  */
 export interface ComposeSpec {
+  name?: string;
   version?: string;
   services: Record<string, Service>;
   networks?: Record<string, ComposeNetwork>;
   volumes?: Record<string, ComposeVolume>;
+  secrets?: Record<string, ComposeSecret>;
+  configs?: Record<string, ComposeConfig>;
+}
+
+/**
+ * Secret definition in a Compose file.
+ */
+export interface ComposeSecret {
+  name?: string;
+  file?: string;
+  environment?: string;
+  external?: boolean;
+  labels?: Record<string, string>;
+  driver?: string;
+  driver_opts?: Record<string, string>;
+}
+
+/**
+ * Config definition in a Compose file.
+ */
+export interface ComposeConfig {
+  name?: string;
+  file?: string;
+  environment?: string;
+  content?: string;
+  external?: boolean;
+  labels?: Record<string, string>;
 }
 
 /**

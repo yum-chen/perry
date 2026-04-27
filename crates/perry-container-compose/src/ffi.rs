@@ -82,7 +82,7 @@ fn make_engine(files: Vec<PathBuf>) -> Result<Arc<ComposeEngine>, String> {
 // ──────────────────────────────────────────────────────────────
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_start(file_ptr: *const StringHeader) -> *const StringHeader {
+pub unsafe extern "C" fn standalone_js_container_compose_start(file_ptr: *const StringHeader) -> *const StringHeader {
     let files: Vec<PathBuf> = parse_compose_file(file_ptr).into_iter().collect();
     match make_engine(files) {
         Err(e) => json_err(&e),
@@ -94,7 +94,7 @@ pub unsafe extern "C" fn js_compose_start(file_ptr: *const StringHeader) -> *con
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_stop(file_ptr: *const StringHeader) -> *const StringHeader {
+pub unsafe extern "C" fn standalone_js_container_compose_stop(file_ptr: *const StringHeader) -> *const StringHeader {
     let files: Vec<PathBuf> = parse_compose_file(file_ptr).into_iter().collect();
     match make_engine(files) {
         Err(e) => json_err(&e),
@@ -106,7 +106,7 @@ pub unsafe extern "C" fn js_compose_stop(file_ptr: *const StringHeader) -> *cons
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_ps(file_ptr: *const StringHeader) -> *const StringHeader {
+pub unsafe extern "C" fn standalone_js_container_compose_ps(file_ptr: *const StringHeader) -> *const StringHeader {
     let files: Vec<PathBuf> = parse_compose_file(file_ptr).into_iter().collect();
     match make_engine(files) {
         Err(e) => json_err(&e),
@@ -130,7 +130,7 @@ pub unsafe extern "C" fn js_compose_ps(file_ptr: *const StringHeader) -> *const 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_logs(
+pub unsafe extern "C" fn standalone_js_container_compose_logs(
     file_ptr: *const StringHeader,
     services_ptr: *const StringHeader,
     _follow: bool,
@@ -155,7 +155,7 @@ pub unsafe extern "C" fn js_compose_logs(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_exec(
+pub unsafe extern "C" fn standalone_js_container_compose_exec(
     file_ptr: *const StringHeader,
     service_ptr: *const StringHeader,
     cmd_ptr: *const StringHeader,
@@ -187,7 +187,7 @@ pub unsafe extern "C" fn js_compose_exec(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn js_compose_config(file_ptr: *const StringHeader) -> *const StringHeader {
+pub unsafe extern "C" fn standalone_js_container_compose_config(file_ptr: *const StringHeader) -> *const StringHeader {
     let files: Vec<PathBuf> = parse_compose_file(file_ptr).into_iter().collect();
     match crate::project::ComposeProject::load_from_files(&files, None, &[]) {
         Err(e) => json_err(&e.to_string()),

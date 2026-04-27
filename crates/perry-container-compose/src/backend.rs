@@ -4,7 +4,7 @@
 //! allowing different container runtimes (podman, docker, apple-container, etc.)
 //! to be supported by the same generic `CliBackend` executor.
 
-use crate::error::{BackendProbeResult, ComposeError, Result};
+pub use crate::error::{BackendProbeResult, ComposeError, Result};
 use crate::types::{
     ContainerHandle, ContainerInfo, ContainerLogs, ContainerSpec,
     ImageInfo,
@@ -729,7 +729,7 @@ pub async fn detect_backend() -> std::result::Result<Arc<dyn ContainerBackend + 
 }
 
 fn platform_candidates() -> &'static [&'static str] {
-    if cfg!(target_os = "macos") {
+    if cfg!(any(target_os = "macos", target_os = "ios")) {
         &[
             "apple/container",
             "orbstack",
@@ -757,7 +757,7 @@ async fn probe_candidate(name: &str) -> std::result::Result<Arc<dyn ContainerBac
         }
         "podman" => {
             let bin = which::which("podman").map_err(|_| "binary not found".to_string())?;
-            if cfg!(target_os = "macos") {
+            if cfg!(any(target_os = "macos", target_os = "ios")) {
                 check_podman_machine_running(&bin).await?;
             }
             let backend = CliBackend::new(bin, DockerProtocol);

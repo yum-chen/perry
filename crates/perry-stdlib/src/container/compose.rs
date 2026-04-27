@@ -1,12 +1,10 @@
 //! Compose orchestration wrapper.
 
-use super::types::{ArcComposeEngine, ContainerInfo, ContainerLogs};
+use super::types::{ContainerInfo, ContainerLogs};
 use perry_container_compose::types::{ComposeHandle, ComposeSpec};
 use perry_container_compose::ComposeEngine;
 use std::sync::Arc;
 use crate::container::mod_private::get_global_backend_instance;
-use crate::container::types::COMPOSE_HANDLES;
-use dashmap::DashMap;
 
 pub async fn compose_up(spec: ComposeSpec) -> Result<ComposeHandle, String> {
     let backend = get_global_backend_instance().await.map_err(|e| e.to_string())?;

@@ -15,8 +15,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// Global registry of running compose engines, keyed by stack ID.
-static COMPOSE_ENGINES: once_cell::sync::Lazy<std::sync::Mutex<IndexMap<u64, Arc<ComposeEngine>>>> =
-    once_cell::sync::Lazy::new(|| std::sync::Mutex::new(IndexMap::new()));
+static COMPOSE_ENGINES: once_cell::sync::Lazy<dashmap::DashMap<u64, Arc<ComposeEngine>>> =
+    once_cell::sync::Lazy::new(dashmap::DashMap::new);
 
 /// Next available stack ID
 static NEXT_STACK_ID: AtomicU64 = AtomicU64::new(1);
@@ -58,21 +58,18 @@ impl ComposeEngine {
             project_name: self.project_name.clone(),
             services,
         };
-        COMPOSE_ENGINES
-            .lock()
-            .unwrap()
-            .insert(stack_id, Arc::clone(&self));
+        COMPOSE_ENGINES.insert(stack_id, Arc::clone(&self));
         handle
     }
 
     /// Look up an engine by stack ID.
     pub fn get_engine(stack_id: u64) -> Option<Arc<ComposeEngine>> {
-        COMPOSE_ENGINES.lock().unwrap().get(&stack_id).cloned()
+        COMPOSE_ENGINES.get(&stack_id).map(|r| Arc::clone(r.value()))
     }
 
     /// Remove an engine from the registry.
     pub fn unregister(stack_id: u64) {
-        COMPOSE_ENGINES.lock().unwrap().shift_remove(&stack_id);
+        COMPOSE_ENGINES.remove(&stack_id);
     }
 
     // ============ up / start ============

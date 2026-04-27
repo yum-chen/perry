@@ -28,6 +28,12 @@ export interface ContainerSpec {
   network?: string;
   /** Remove container on exit */
   rm?: boolean;
+  /** Container labels */
+  labels?: Record<string, string>;
+  /** Mount the container root as read-only */
+  read_only?: boolean;
+  /** Custom seccomp profile path */
+  seccomp?: string;
 }
 
 /**

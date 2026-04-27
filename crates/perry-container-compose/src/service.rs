@@ -7,15 +7,15 @@ use md5::{Digest, Md5};
 
 /// Generate a stable container name for a service.
 ///
-/// Format: `{short_hash}{random_suffix_hex}`
-pub fn generate_name(_service_name: &str, image_name: &str) -> String {
+/// Format: `{short_hash}-{random_suffix_hex}`
+pub fn generate_name(_service_name: &str, hash_input: &str) -> String {
     let mut hasher = Md5::new();
-    hasher.update(image_name.as_bytes());
+    hasher.update(hash_input.as_bytes());
     let hash = hasher.finalize();
     let short_hash = &hex::encode(hash)[..8];
 
     let random_suffix: u32 = rand::random();
-    format!("{}{:08x}", short_hash, random_suffix)
+    format!("{}-{:08x}", short_hash, random_suffix)
 }
 
 /// Compute a short hash of the service configuration.
@@ -53,8 +53,8 @@ pub fn service_container_name(svc: &ComposeService, service_name: &str) -> Strin
         return explicit.to_string();
     }
 
-    let image_name = svc.image.as_deref().unwrap_or(service_name);
-    generate_name(service_name, image_name)
+    let service_yaml = serde_yaml::to_string(svc).unwrap_or_default();
+    generate_name(service_name, &service_yaml)
 }
 
 impl ComposeService {
@@ -131,8 +131,9 @@ mod tests {
     #[test]
     fn test_generate_name_format() {
         let name = generate_name("web", "nginx");
-        // Format: {short_hash}{random_suffix_hex}
-        assert_eq!(name.len(), 8 + 8);
+        // Format: {short_hash}-{random_suffix_hex}
+        assert_eq!(name.len(), 8 + 1 + 8);
+        assert!(name.contains('-'));
     }
 
     #[test]
