@@ -36,6 +36,7 @@ pub async fn compose_ps(id: u64) -> Result<Vec<ContainerInfo>, String> {
         image: i.image,
         status: i.status,
         ports: i.ports,
+        labels: i.labels,
         created: i.created,
     }).collect())
 }

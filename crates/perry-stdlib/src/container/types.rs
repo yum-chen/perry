@@ -55,6 +55,7 @@ pub struct ContainerInfo {
     pub image: String,
     pub status: String,
     pub ports: Vec<String>,
+    pub labels: HashMap<String, String>,
     pub created: String,
 }
 
