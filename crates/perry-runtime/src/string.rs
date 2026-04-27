@@ -481,7 +481,7 @@ fn string_data(s: *const StringHeader) -> *const u8 {
 }
 
 /// Get string as a Rust &str (for internal use)
-fn string_as_str<'a>(s: *const StringHeader) -> &'a str {
+pub fn string_as_str<'a>(s: *const StringHeader) -> &'a str {
     unsafe {
         let blen = (*s).byte_len as usize;
         let cap = (*s).capacity as usize;

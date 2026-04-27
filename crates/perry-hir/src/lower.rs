@@ -3027,6 +3027,8 @@ fn lower_module_decl(
                                                             ("pg", "connect") => Some("Client"),
                                                             ("http" | "https", "request" | "get") => Some("ClientRequest"),
                                                             ("axios", "get" | "post" | "put" | "delete" | "patch" | "request") => Some("Response"),
+                                                            ("perry/container" | "perry/compose" | "perry/container-compose", "up" | "composeUp") => Some("ComposeHandle"),
+                                                            ("perry/workloads", "runGraph") => Some("GraphHandle"),
                                                             _ => None,
                                                         };
                                                         if let Some(class_name) = class_name {
@@ -3947,6 +3949,8 @@ fn lower_stmt(
                                         ("axios", "get" | "post" | "put" | "delete" | "patch" | "request") => Some("Response"),
                                         ("mongodb", "connect") => Some("MongoClient"),
                                         ("pg", "connect") => Some("Client"),
+                                        ("perry/container" | "perry/compose" | "perry/container-compose", "up" | "composeUp") => Some("ComposeHandle"),
+                                        ("perry/workloads", "runGraph") => Some("GraphHandle"),
                                         _ => None,
                                     };
                                     if let Some(cn) = class_name {

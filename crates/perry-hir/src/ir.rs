@@ -117,6 +117,11 @@ pub const NATIVE_MODULES: &[&str] = &[
     "perry/widget",
     // Perry i18n
     "perry/i18n",
+    // Perry container management
+    "perry/container",
+    "perry/container-compose",
+    "perry/compose",
+    "perry/workloads",
     // Node.js worker threads
     "worker_threads",
     // Perry threading primitives (parallelMap, spawn)

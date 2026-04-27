@@ -11,11 +11,6 @@ use perry_container_compose::ComposeEngine;
 
 // ============ Handle Registry ============
 
-pub struct ContainerHandle {
-    pub id: String,
-    pub name: Option<String>,
-}
-
 pub static CONTAINER_HANDLES: OnceLock<DashMap<u64, ContainerHandle>> = OnceLock::new();
 pub static COMPOSE_HANDLES: OnceLock<DashMap<u64, ArcComposeEngine>> = OnceLock::new();
 pub static NEXT_HANDLE_ID: AtomicU64 = AtomicU64::new(1);
@@ -34,55 +29,10 @@ pub fn register_compose_handle(engine: ComposeEngine) -> u64 {
     id
 }
 
-// ============ Core Container Types ============
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ContainerSpec {
-    pub image: String,
-    pub name: Option<String>,
-    pub ports: Option<Vec<String>>,
-    pub volumes: Option<Vec<String>>,
-    pub env: Option<HashMap<String, String>>,
-    pub cmd: Option<Vec<String>>,
-    pub entrypoint: Option<Vec<String>>,
-    pub network: Option<String>,
-    pub rm: Option<bool>,
-    pub read_only: Option<bool>,
-    pub seccomp: Option<String>,
-    pub labels: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContainerInfo {
-    pub id: String,
-    pub name: String,
-    pub image: String,
-    pub status: String,
-    pub ports: Vec<String>,
-    pub created: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ContainerLogs {
-    pub stdout: String,
-    pub stderr: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImageInfo {
-    pub id: String,
-    pub repository: String,
-    pub tag: String,
-    pub size: u64,
-    pub created: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ComposeHandle {
-    pub stack_id: u64,
-    pub project_name: String,
-    pub services: Vec<String>,
-}
+pub use perry_container_compose::types::{
+    BackendInfo, ComposeHandle, ComposeSpec, ContainerHandle, ContainerInfo, ContainerLogs,
+    ContainerSpec, ImageInfo, IsolationLevel, ServiceGraph, StackStatus,
+};
 
 // ============ Helper for StringHeader ============
 

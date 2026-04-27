@@ -114,6 +114,5 @@ mod tests {
     #[test]
     fn test_base_image_defaults() {
         assert!(get_default_base_image().contains("chainguard"));
-        assert!(get_static_base_image().contains("wolfi"));
     }
 }

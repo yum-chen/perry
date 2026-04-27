@@ -170,6 +170,7 @@ mod tests {
             image: "postgres".to_string(),
             status: "running".to_string(),
             ports: vec!["5432:5432".to_string()],
+            labels: HashMap::new(),
             created: "".to_string(),
         });
 
