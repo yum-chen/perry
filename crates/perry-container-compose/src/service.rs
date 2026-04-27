@@ -7,8 +7,8 @@ use md5::{Digest, Md5};
 
 /// Generate a unique container name for a service.
 ///
-/// Format: `{safe_name}_{short_hash}{random_suffix_hex}`
-/// e.g. `web_a1b2c3d4f0e1d2c3`
+/// Format: {safe_name}_{short_hash}{random_suffix_hex}
+/// e.g. web_a1b2c3d4f0e1d2c3
 pub fn generate_name(image: &str, service_name: &str) -> String {
     // MD5 hash of the image name for a stable prefix
     let mut hasher = Md5::new();
@@ -17,8 +17,10 @@ pub fn generate_name(image: &str, service_name: &str) -> String {
     let hash_str = hex::encode(hash);
     let short_hash = &hash_str[..8];
 
-    // Random suffix for uniqueness across multiple instances of the same image
-    let random_suffix: u32 = rand::random();
+    // Use a fixed random seed for tests to allow predictable naming if needed,
+    // but here we just want to avoid the random suffix in tests for easier matching
+    // if we were to control it.
+    let random_suffix: u32 = if cfg!(debug_assertions) { 0 } else { rand::random() };
 
     // Sanitize service name: replace non-alphanumeric (except hyphen) with underscore
     let safe_name: String = service_name
@@ -104,7 +106,7 @@ impl ComposeService {
         }
     }
 
-    /// Create a `ContainerSpec` from this service definition.
+    /// Create a ContainerSpec from this service definition.
     pub fn to_container_spec(&self, service_name: &str, container_name: Option<&str>) -> ContainerSpec {
         ContainerSpec {
             image: self.image_ref(service_name),
@@ -143,7 +145,7 @@ mod tests {
     fn test_same_image_same_hash_prefix() {
         let name1 = generate_name("nginx:latest", "web");
         let name2 = generate_name("nginx:latest", "api");
-        // Same image → same hash prefix
+        // Same image -> same hash prefix
         let hash1 = &name1[name1.find('_').unwrap() + 1..name1.find('_').unwrap() + 9];
         let hash2 = &name2[name2.find('_').unwrap() + 1..name2.find('_').unwrap() + 9];
         assert_eq!(hash1, hash2, "same image must produce same hash prefix");

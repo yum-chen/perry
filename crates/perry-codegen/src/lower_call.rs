@@ -223,16 +223,16 @@ pub(crate) fn lower_call(ctx: &mut FnCtx<'_>, callee: &Expr, args: &[Expr]) -> R
         // These arrive as ExternFuncRef because perry/system imports aren't
         // lowered to NativeMethodCall in the HIR.
         if let Some(sig) = perry_system_table_lookup(name) {
-            return lower_perry_ui_table_call(ctx, sig, args);
+            return lower_native_table_call(ctx, sig, args);
         }
         if let Some(sig) = perry_container_table_lookup(name) {
-            return lower_perry_ui_table_call(ctx, sig, args);
+            return lower_native_table_call(ctx, sig, args);
         }
         if let Some(sig) = perry_compose_table_lookup(name) {
-            return lower_perry_ui_table_call(ctx, sig, args);
+            return lower_native_table_call(ctx, sig, args);
         }
         if let Some(sig) = perry_workloads_table_lookup(name) {
-            return lower_perry_ui_table_call(ctx, sig, args);
+            return lower_native_table_call(ctx, sig, args);
         }
         // Built-in runtime extern functions (`js_weakmap_set`,
         // `js_regexp_exec`, etc.) that start with `js_` are resolved
@@ -2417,7 +2417,7 @@ pub(crate) fn lower_native_method_call(
     // perry/system dispatch: audioStart, audioGetLevel, getDeviceModel, etc.
     if module == "perry/system" && object.is_none() {
         if let Some(sig) = perry_system_table_lookup(method) {
-            return lower_perry_ui_table_call(ctx, sig, args);
+            return lower_native_table_call(ctx, sig, args);
         }
     }
 
@@ -2428,7 +2428,7 @@ pub(crate) fn lower_native_method_call(
         && method != "HStack"
     {
         if let Some(sig) = perry_ui_table_lookup(method) {
-            return lower_perry_ui_table_call(ctx, sig, args);
+            return lower_native_table_call(ctx, sig, args);
         }
         // Fail fast at compile time so a missing/misspelled method
         // surfaces as an error instead of silently returning 0.0 —
@@ -3495,6 +3495,8 @@ enum UiArgKind {
     Closure,
     /// Raw i64 (rare; some setters take an enum tag as i64).
     I64Raw,
+    /// Raw i32.
+    I32Raw,
 }
 
 /// What the perry/ui FFI function returns and how to box it.
@@ -3540,36 +3542,6 @@ struct UiSig {
 /// returns the zero-sentinel). That's the behavior the entire perry/ui
 /// surface had pre-v0.5.10 — adding a row here flips one method from
 /// "silent no-op" to "real call into libperry_ui_macos.a".
-/// Maps perry/container TypeScript function names to their FFI symbols.
-static PERRY_CONTAINER_TABLE: &[(&str, &str)] = &[
-    ("run",         "js_container_run"),
-    ("create",      "js_container_create"),
-    ("start",       "js_container_start"),
-    ("stop",        "js_container_stop"),
-    ("remove",      "js_container_remove"),
-    ("list",        "js_container_list"),
-    ("inspect",     "js_container_inspect"),
-    ("logs",        "js_container_logs"),
-    ("exec",        "js_container_exec"),
-    ("pullImage",   "js_container_pullImage"),
-    ("listImages",  "js_container_listImages"),
-    ("removeImage", "js_container_removeImage"),
-    ("getBackend",  "js_container_getBackend"),
-    ("composeUp",   "js_container_composeUp"),
-];
-
-/// Maps perry/compose TypeScript function names to their FFI symbols.
-static PERRY_COMPOSE_TABLE: &[(&str, &str)] = &[
-    ("up",      "js_compose_up"),
-    ("down",    "js_compose_down"),
-    ("ps",      "js_compose_ps"),
-    ("logs",    "js_compose_logs"),
-    ("exec",    "js_compose_exec"),
-    ("config",  "js_compose_config"),
-    ("start",   "js_compose_start"),
-    ("stop",    "js_compose_stop"),
-    ("restart", "js_compose_restart"),
-];
 
 const PERRY_UI_TABLE: &[UiSig] = &[
     // ---- Constructors (return widget handle) ----
@@ -4021,7 +3993,7 @@ fn perry_ui_instance_method_lookup(method: &str) -> Option<&'static UiSig> {
 // =============================================================================
 
 /// Maps JS import names from `perry/system` to their `perry_system_*` / `perry_*`
-/// runtime C symbols. Uses the same UiSig + lower_perry_ui_table_call machinery
+/// runtime C symbols. Uses the same UiSig + lower_native_table_call machinery
 /// since the calling convention is identical.
 static PERRY_SYSTEM_TABLE: &[UiSig] = &[
     UiSig { method: "isDarkMode", runtime: "perry_system_is_dark_mode",
@@ -4068,15 +4040,15 @@ static PERRY_CONTAINER_TABLE: &[UiSig] = &[
     UiSig { method: "run", runtime: "js_container_run", args: &[UiArgKind::Str], ret: UiReturnKind::Promise },
     UiSig { method: "create", runtime: "js_container_create", args: &[UiArgKind::Str], ret: UiReturnKind::Promise },
     UiSig { method: "start", runtime: "js_container_start", args: &[UiArgKind::Str], ret: UiReturnKind::Promise },
-    UiSig { method: "stop", runtime: "js_container_stop", args: &[UiArgKind::Str, UiArgKind::F64], ret: UiReturnKind::Promise },
-    UiSig { method: "remove", runtime: "js_container_remove", args: &[UiArgKind::Str, UiArgKind::F64], ret: UiReturnKind::Promise },
-    UiSig { method: "list", runtime: "js_container_list", args: &[UiArgKind::F64], ret: UiReturnKind::Promise },
+    UiSig { method: "stop", runtime: "js_container_stop", args: &[UiArgKind::Str, UiArgKind::Str], ret: UiReturnKind::Promise },
+    UiSig { method: "remove", runtime: "js_container_remove", args: &[UiArgKind::Str, UiArgKind::Str], ret: UiReturnKind::Promise },
+    UiSig { method: "list", runtime: "js_container_list", args: &[UiArgKind::Str], ret: UiReturnKind::Promise },
     UiSig { method: "inspect", runtime: "js_container_inspect", args: &[UiArgKind::Str], ret: UiReturnKind::Promise },
-    UiSig { method: "logs", runtime: "js_container_logs", args: &[UiArgKind::Str, UiArgKind::F64], ret: UiReturnKind::Promise },
+    UiSig { method: "logs", runtime: "js_container_logs", args: &[UiArgKind::Str, UiArgKind::Str], ret: UiReturnKind::Promise },
     UiSig { method: "exec", runtime: "js_container_exec", args: &[UiArgKind::Str, UiArgKind::Str, UiArgKind::Str, UiArgKind::Str], ret: UiReturnKind::Promise },
     UiSig { method: "pullImage", runtime: "js_container_pullImage", args: &[UiArgKind::Str], ret: UiReturnKind::Promise },
     UiSig { method: "listImages", runtime: "js_container_listImages", args: &[], ret: UiReturnKind::Promise },
-    UiSig { method: "removeImage", runtime: "js_container_removeImage", args: &[UiArgKind::Str, UiArgKind::F64], ret: UiReturnKind::Promise },
+    UiSig { method: "removeImage", runtime: "js_container_removeImage", args: &[UiArgKind::Str, UiArgKind::I32Raw], ret: UiReturnKind::Promise },
     UiSig { method: "getBackend", runtime: "js_container_getBackend", args: &[], ret: UiReturnKind::Str },
     UiSig { method: "detectBackend", runtime: "js_container_detectBackend", args: &[], ret: UiReturnKind::Promise },
     UiSig { method: "build", runtime: "js_container_build", args: &[UiArgKind::Str, UiArgKind::Str], ret: UiReturnKind::Promise },
@@ -4092,14 +4064,14 @@ fn perry_container_table_lookup(method: &str) -> Option<&'static UiSig> {
 
 static PERRY_COMPOSE_TABLE: &[UiSig] = &[
     UiSig { method: "up", runtime: "js_container_composeUp", args: &[UiArgKind::Str], ret: UiReturnKind::Promise },
-    UiSig { method: "down", runtime: "js_container_compose_down", args: &[UiArgKind::F64, UiArgKind::F64], ret: UiReturnKind::Promise },
-    UiSig { method: "ps", runtime: "js_container_compose_ps", args: &[UiArgKind::F64], ret: UiReturnKind::Promise },
-    UiSig { method: "logs", runtime: "js_container_compose_logs", args: &[UiArgKind::F64, UiArgKind::Str, UiArgKind::F64], ret: UiReturnKind::Promise },
-    UiSig { method: "exec", runtime: "js_container_compose_exec", args: &[UiArgKind::F64, UiArgKind::Str, UiArgKind::Str, UiArgKind::Str], ret: UiReturnKind::Promise },
-    UiSig { method: "config", runtime: "js_container_compose_config", args: &[UiArgKind::F64], ret: UiReturnKind::Promise },
-    UiSig { method: "start", runtime: "js_container_compose_start", args: &[UiArgKind::F64, UiArgKind::Str], ret: UiReturnKind::Promise },
-    UiSig { method: "stop", runtime: "js_container_compose_stop", args: &[UiArgKind::F64, UiArgKind::Str], ret: UiReturnKind::Promise },
-    UiSig { method: "restart", runtime: "js_container_compose_restart", args: &[UiArgKind::F64, UiArgKind::Str], ret: UiReturnKind::Promise },
+    UiSig { method: "down", runtime: "js_container_compose_down", args: &[UiArgKind::I64Raw, UiArgKind::I32Raw], ret: UiReturnKind::Promise },
+    UiSig { method: "ps", runtime: "js_container_compose_ps", args: &[UiArgKind::I64Raw], ret: UiReturnKind::Promise },
+    UiSig { method: "logs", runtime: "js_container_compose_logs", args: &[UiArgKind::I64Raw, UiArgKind::Str, UiArgKind::F64], ret: UiReturnKind::Promise },
+    UiSig { method: "exec", runtime: "js_container_compose_exec", args: &[UiArgKind::I64Raw, UiArgKind::Str, UiArgKind::Str, UiArgKind::Str], ret: UiReturnKind::Promise },
+    UiSig { method: "config", runtime: "js_container_compose_config", args: &[UiArgKind::I64Raw], ret: UiReturnKind::Promise },
+    UiSig { method: "start", runtime: "js_container_compose_start", args: &[UiArgKind::I64Raw, UiArgKind::Str], ret: UiReturnKind::Promise },
+    UiSig { method: "stop", runtime: "js_container_compose_stop", args: &[UiArgKind::I64Raw, UiArgKind::Str], ret: UiReturnKind::Promise },
+    UiSig { method: "restart", runtime: "js_container_compose_restart", args: &[UiArgKind::I64Raw, UiArgKind::Str], ret: UiReturnKind::Promise },
 ];
 
 fn perry_compose_table_lookup(method: &str) -> Option<&'static UiSig> {
@@ -4116,7 +4088,7 @@ fn perry_compose_table_lookup(method: &str) -> Option<&'static UiSig> {
 /// zero-sentinel. The catch-all is intentional: TS users may write
 /// `Text()` (no arg) or `Text(s, extra)` and we don't want to bail
 /// the entire compilation.
-fn lower_perry_ui_table_call(
+fn lower_native_table_call(
     ctx: &mut FnCtx<'_>,
     sig: &UiSig,
     args: &[Expr],
@@ -4175,6 +4147,13 @@ fn lower_perry_ui_table_call(
                 let i = blk.fptosi(DOUBLE, &v, I64);
                 llvm_args.push((I64, i));
                 runtime_param_types.push(I64);
+            }
+            UiArgKind::I32Raw => {
+                let v = lower_expr(ctx, arg)?;
+                let blk = ctx.block();
+                let i = blk.fptosi(DOUBLE, &v, I32);
+                llvm_args.push((I32, i));
+                runtime_param_types.push(I32);
             }
         }
     }

@@ -19,12 +19,12 @@ pub struct MockBackendState {
 
 #[derive(Clone, Default)]
 pub struct MockBackend {
-    pub state: Arc Arc<Mutex<Mutex<MockBackendState>>,
+    pub state: Arc<Mutex<MockBackendState>>,
 }
 
 #[async_trait]
 impl ContainerBackend for MockBackend {
-    fn backend_name(&self) -> &'static str { "mock" }
+    fn backend_name(&self) -> &str { "mock" }
 
     async fn check_available(&self) -> Result<()> { Ok(()) }
 
@@ -32,7 +32,7 @@ impl ContainerBackend for MockBackend {
         Ok(())
     }
 
-    async fn run(&self, spec: &ContainerSpec) -> Result Result<ContainerHandle> {
+    async fn run(&self, spec: &ContainerSpec) -> Result<ContainerHandle> {
         let mut state = self.state.lock().unwrap();
         let name = spec.name.clone().unwrap_or_else(|| "unnamed".to_string());
 
@@ -50,7 +50,7 @@ impl ContainerBackend for MockBackend {
         Ok(ContainerHandle { id: name.clone(), name: Some(name) })
     }
 
-    async fn create(&self, _spec: &ContainerSpec) -> Result Result<ContainerHandle> { Ok(ContainerHandle { id: "id".into(), name: None }) }
+    async fn create(&self, _spec: &ContainerSpec) -> Result<ContainerHandle> { Ok(ContainerHandle { id: "id".into(), name: None }) }
     async fn start(&self, _id: &str) -> Result<()> { Ok(()) }
     async fn stop(&self, id: &str, _timeout: Option<u32>) -> Result<()> {
         let mut state = self.state.lock().unwrap();
@@ -64,7 +64,7 @@ impl ContainerBackend for MockBackend {
         Ok(())
     }
 
-    async fn list(&self, _all: bool) -> Result<Vec<Vec<ContainerInfo>> {
+    async fn list(&self, _all: bool) -> Result<Vec<ContainerInfo>> {
         let state = self.state.lock().unwrap();
         let mut infos = Vec::new();
         for id in &state.containers {
@@ -90,7 +90,7 @@ impl ContainerBackend for MockBackend {
         Ok(infos)
     }
 
-    async fn inspect(&self, id: &str) -> Result Result<ContainerInfo> {
+    async fn inspect(&self, id: &str) -> Result<ContainerInfo> {
         let state = self.state.lock().unwrap();
         if state.containers.contains(&id.to_string()) {
             Ok(ContainerInfo {
@@ -121,11 +121,11 @@ impl ContainerBackend for MockBackend {
         Ok(0)
     }
 
-    async fn logs(&self, _id: &str, _tail: Option<u32>) -> Result Result<ContainerLogs> {
+    async fn logs(&self, _id: &str, _tail: Option<u32>) -> Result<ContainerLogs> {
         Ok(ContainerLogs { stdout: "logs".into(), stderr: "".into() })
     }
 
-    async fn exec(&self, _id: &str, _cmd: &[String], _env: Option<&HashMap<String, String>>, _workdir: Option<&str>) -> Result Result<ContainerLogs> {
+    async fn exec(&self, _id: &str, _cmd: &[String], _env: Option<&HashMap<String, String>>, _workdir: Option<&str>) -> Result<ContainerLogs> {
         Ok(ContainerLogs { stdout: "exec".into(), stderr: "".into() })
     }
 

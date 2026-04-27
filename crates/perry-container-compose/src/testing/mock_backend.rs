@@ -73,7 +73,7 @@ impl ContainerBackend for MockBackend {
     }
     async fn inspect(&self, id: &str) -> Result<ContainerInfo> {
         self.calls.lock().unwrap().push(RecordedCall::Inspect(id.to_string()));
-        Ok(ContainerInfo { id: id.to_string(), name: id.to_string(), image: "img".to_string(), status: "running".to_string(), ports: Vec::new(), created: "".to_string() })
+        Ok(ContainerInfo { id: id.to_string(), name: id.to_string(), labels: std::collections::HashMap::new(), image: "img".to_string(), status: "running".to_string(), ports: Vec::new(), created: "".to_string() })
     }
     async fn inspect_image(&self, reference: &str) -> Result<ImageInfo> {
         Ok(ImageInfo { id: "id".to_string(), repository: reference.to_string(), tag: "latest".to_string(), size: 0, created: "".to_string() })

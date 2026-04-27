@@ -8,7 +8,7 @@ use perry_stdlib::container::*;
 use std::ptr;
 
 const PROMISE_STATE_PENDING: i32 = 0;
-const PROMISE_STATE_FULFILLED: i32 = 1;
+// const PROMISE_STATE_FULFILLED: i32 = 1;
 const PROMISE_STATE_REJECTED: i32 = 2;
 
 /// Helper to create a fake StringHeader on the stack for testing.
@@ -55,6 +55,7 @@ fn test_js_container_run_null() {
         let p = js_container_run(ptr::null());
         assert!(!p.is_null());
         drive_promise(p);
+        // Pointers < 0x1000 are treated as null/invalid by string_from_header
         assert_eq!(js_promise_state(p), PROMISE_STATE_REJECTED);
     }
 }
@@ -71,11 +72,11 @@ fn test_js_container_run_malformed() {
     }
 }
 
-// ============ js_container_composeUp ============
+// ============ js_container_compose_up ============
 
 // Feature: perry-container | Layer: ffi-contract | Req: 6.1 | Property: -
 #[test]
-fn test_js_container_composeUp_null() {
+fn test_js_container_compose_up_null() {
     unsafe {
         let p = js_container_composeUp(ptr::null());
         assert!(!p.is_null());
@@ -86,8 +87,9 @@ fn test_js_container_composeUp_null() {
 
 // Feature: perry-container | Layer: ffi-contract | Req: 6.1 | Property: -
 #[test]
-fn test_js_container_composeUp_malformed() {
-    let header = make_string_header("not a json object");
+fn test_js_container_compose_up_malformed() {
+    // Malformed input should cause the promise to reject.
+    let header = make_string_header("{\"services\": { \"web\": { \"image\": \"nginx\" } }"); // Missing closing brace
     unsafe {
         let p = js_container_composeUp(header.as_ptr() as *const StringHeader);
         assert!(!p.is_null());
@@ -96,14 +98,14 @@ fn test_js_container_composeUp_malformed() {
     }
 }
 
-// ============ js_compose_ps ============
+// ============ js_container_compose_ps ============
 
 // Feature: perry-container | Layer: ffi-contract | Req: 6.6 | Property: -
 #[test]
-fn test_js_compose_ps_not_found() {
+fn test_js_container_compose_ps_not_found() {
     unsafe {
         // Stack ID 99999 should not exist
-        let p = js_compose_ps(99999.0);
+        let p = js_container_compose_ps(99999 as i64);
         assert!(!p.is_null());
         drive_promise(p);
         assert_eq!(js_promise_state(p), PROMISE_STATE_REJECTED);
@@ -129,9 +131,9 @@ Coverage Table:
 |-------------|-----------|-------|
 | 11.1        | test_js_container_run_null | ffi-contract |
 | 11.1        | test_js_container_run_malformed | ffi-contract |
-| 6.1         | test_js_container_composeUp_null | ffi-contract |
-| 6.1         | test_js_container_composeUp_malformed | ffi-contract |
-| 6.6         | test_js_compose_ps_not_found | ffi-contract |
+| 6.1         | test_js_container_compose_up_null | ffi-contract |
+| 6.1         | test_js_container_compose_up_malformed | ffi-contract |
+| 6.6         | test_js_container_compose_ps_not_found | ffi-contract |
 | 3.1         | test_js_container_inspect_null | ffi-contract |
 
 Deferred Requirements:

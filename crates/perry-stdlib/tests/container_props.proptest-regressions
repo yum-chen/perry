@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 018b356d899b1fc28e12c45148199ac6a37a6503b33f14004c808fd2c580bb07 # shrinks to keys = ["P_", "P_"], int_val = 0, bool_val = false, str_val = "0"
+cc 070c8618454794109a29c4d1c485f466af07ed6f9cff00e52275b4c418a4ddd2 # shrinks to names = ["k0", "k0"]
