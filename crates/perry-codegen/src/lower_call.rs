@@ -4661,9 +4661,23 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
         class_filter: None, runtime: "js_container_detectBackend", args: &[], ret: NR_PTR },
     NativeModSig { module: "perry/container", has_receiver: false, method: "composeUp",
         class_filter: None, runtime: "js_container_composeUp", args: &[NA_STR], ret: NR_PTR },
+    // Cleanup helpers — let users tear down stacks WITHOUT holding
+    // a `ComposeHandle`. See `crates/perry-container-compose/src/
+    // compose.rs::down_by_project / down_all / remove_if_exists`.
+    NativeModSig { module: "perry/container", has_receiver: false, method: "downByProject",
+        class_filter: None, runtime: "js_container_downByProject", args: &[NA_STR, NA_STR], ret: NR_PTR },
+    NativeModSig { module: "perry/container", has_receiver: false, method: "downAll",
+        class_filter: None, runtime: "js_container_downAll", args: &[NA_STR], ret: NR_PTR },
+    NativeModSig { module: "perry/container", has_receiver: false, method: "removeIfExists",
+        class_filter: None, runtime: "js_container_removeIfExists", args: &[NA_STR, NA_F64], ret: NR_PTR },
     // ComposeHandle instance methods (has_receiver = true)
+    // `down(opts?)` — opts is a JSON-stringified DownOptions object
+    // (`{ volumes?: bool, removeOrphans?: bool }`); the FFI parses it
+    // server-side. Pre-fix the dispatch passed `volumes` as bare F64,
+    // which made the user's `{volumes:false}` object NaN-box to a
+    // non-zero pointer and silently flipped the flag to true.
     NativeModSig { module: "perry/container", has_receiver: true, method: "down",
-        class_filter: None, runtime: "js_container_compose_down", args: &[NA_F64], ret: NR_PTR },
+        class_filter: None, runtime: "js_container_compose_down", args: &[NA_STR], ret: NR_PTR },
     NativeModSig { module: "perry/container", has_receiver: true, method: "ps",
         class_filter: None, runtime: "js_container_compose_ps", args: &[], ret: NR_PTR },
     NativeModSig { module: "perry/container", has_receiver: true, method: "logs",
@@ -4687,7 +4701,7 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
     NativeModSig { module: "perry/container-compose", has_receiver: false, method: "up",
         class_filter: None, runtime: "js_container_composeUp", args: &[NA_STR], ret: NR_PTR },
     NativeModSig { module: "perry/container-compose", has_receiver: false, method: "down",
-        class_filter: None, runtime: "js_container_compose_down", args: &[NA_F64, NA_F64], ret: NR_PTR },
+        class_filter: None, runtime: "js_container_compose_down", args: &[NA_F64, NA_STR], ret: NR_PTR },
     NativeModSig { module: "perry/container-compose", has_receiver: false, method: "ps",
         class_filter: None, runtime: "js_container_compose_ps", args: &[NA_F64], ret: NR_PTR },
     NativeModSig { module: "perry/container-compose", has_receiver: false, method: "logs",
@@ -4707,7 +4721,7 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
     NativeModSig { module: "perry/compose", has_receiver: false, method: "up",
         class_filter: None, runtime: "js_compose_up", args: &[NA_STR], ret: NR_PTR },
     NativeModSig { module: "perry/compose", has_receiver: false, method: "down",
-        class_filter: None, runtime: "js_compose_down", args: &[NA_F64, NA_F64], ret: NR_PTR },
+        class_filter: None, runtime: "js_compose_down", args: &[NA_F64, NA_STR], ret: NR_PTR },
     NativeModSig { module: "perry/compose", has_receiver: false, method: "ps",
         class_filter: None, runtime: "js_compose_ps", args: &[NA_F64], ret: NR_PTR },
     NativeModSig { module: "perry/compose", has_receiver: false, method: "logs",
@@ -4958,8 +4972,17 @@ pub(super) fn lower_native_module_dispatch(
                 arg_types.push(DOUBLE);
             }
             NativeArgKind::StrPtr => {
+                // `js_value_to_str_ptr_for_ffi` (vs. the older
+                // `js_get_string_pointer_unified`) gracefully handles
+                // non-string arguments: object literals, arrays, numbers,
+                // and bools auto-stringify via `js_json_stringify`. This
+                // matches user expectation for FFIs like `composeUp({…})`
+                // where the TS surface accepts an object but the FFI
+                // boundary takes a JSON-encoded `Str`. Pre-fix, the raw
+                // object pointer was passed through and the FFI's
+                // `serde_json::from_str` failed at column 0.
                 let blk = ctx.block();
-                let ptr = blk.call(I64, "js_get_string_pointer_unified", &[(DOUBLE, &lowered)]);
+                let ptr = blk.call(I64, "js_value_to_str_ptr_for_ffi", &[(DOUBLE, &lowered)]);
                 llvm_args.push((I64, ptr));
                 arg_types.push(I64);
             }

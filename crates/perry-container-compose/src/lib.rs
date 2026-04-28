@@ -1,6 +1,7 @@
 //! `perry-container-compose` — Docker Compose-like experience for Apple Container / Podman.
 
 pub mod backend;
+pub mod capabilities;
 pub mod cli;
 pub mod compose;
 pub mod config;
@@ -35,6 +36,11 @@ pub mod ffi;
 pub use backend::{
     detect_backend, AppleContainerProtocol, BackendProbeResult, CliBackend, CliProtocol,
     ContainerBackend, DockerProtocol, LimaProtocol,
+};
+pub use capabilities::{
+    normalise_security_profile, normalise_spec_for, unsupported_feature_names,
+    BackendCapabilities, EnforcementMode, FeatureSupport, NormalizationAction,
+    NormalizationWarning,
 };
 pub use compose::{resolve_startup_order, ComposeEngine};
 pub use error::{ComposeError, Result};
