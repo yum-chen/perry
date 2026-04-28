@@ -297,13 +297,16 @@ impl ComposeEngine {
 
         // 3. Remove volumes (if requested)
         if remove_volumes {
-        if let Some(volumes) = &self.spec.volumes {
+            if let Some(volumes) = &self.spec.volumes {
                 for (vol_name, vol_config_opt) in volumes {
-                    let external = vol_config_opt.as_ref().map_or(false, |c| c.external.unwrap_or(false));
+                    let external = vol_config_opt
+                        .as_ref()
+                        .map_or(false, |c| c.external.unwrap_or(false));
                     if external {
                         continue;
                     }
-                    let resolved_name = vol_config_opt.as_ref()
+                    let resolved_name = vol_config_opt
+                        .as_ref()
                         .and_then(|c| c.name.as_deref())
                         .unwrap_or(vol_name.as_str());
                     let _ = self.backend.remove_volume(resolved_name).await;
@@ -378,13 +381,10 @@ impl ComposeEngine {
     // ============ exec ============
 
     /// Execute a command in a running service container.
-    pub async fn exec(
-        &self,
-        service: &str,
-        cmd: &[String],
-    ) -> Result<ContainerLogs> {
-            let svc = self.spec
-                .services
+    pub async fn exec(&self, service: &str, cmd: &[String]) -> Result<ContainerLogs> {
+        let svc = self
+            .spec
+            .services
             .get(service)
             .ok_or_else(|| ComposeError::NotFound(service.to_owned()))?;
 

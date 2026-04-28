@@ -12,6 +12,7 @@ pub mod commands;
 pub mod orchestrate;
 pub mod installer;
 pub mod compose;
+pub mod workload;
 pub mod config;
 pub mod error;
 pub mod project;

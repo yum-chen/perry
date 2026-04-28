@@ -71,12 +71,25 @@ unsafe fn string_to_js(s: &str) -> *const StringHeader {
 // ============ Container Lifecycle ============
 
 /// Run a container from the given spec
-/// FFI: js_container_run(spec_json: *const StringHeader) -> *mut Promise
+/// FFI: js_container_run(spec_val: f64) -> *mut Promise
 #[no_mangle]
-pub unsafe extern "C" fn js_container_run(spec_ptr: *const StringHeader) -> *mut Promise {
+pub unsafe extern "C" fn js_container_run(spec_val: f64) -> *mut Promise {
     let promise = js_promise_new();
 
-    let spec = match types::parse_container_spec(spec_ptr) {
+    let val = JSValue::from_bits(spec_val.to_bits());
+    let spec = if val.is_string() {
+        let json = string_from_header(val.as_string_ptr()).unwrap_or_default();
+        serde_json::from_str(&json).map_err(|e| e.to_string())
+    } else {
+        let spec_json_ptr = perry_runtime::json::js_json_stringify(spec_val, 0);
+        if spec_json_ptr.is_null() {
+            Err("Failed to stringify container spec".to_string())
+        } else {
+            types::parse_container_spec(spec_json_ptr)
+        }
+    };
+
+    let spec = match spec {
         Ok(s) => s,
         Err(e) => {
             crate::common::spawn_for_promise(promise as *mut u8, async move {
@@ -103,13 +116,57 @@ pub unsafe extern "C" fn js_container_run(spec_ptr: *const StringHeader) -> *mut
     promise
 }
 
-/// Create a container from the given spec without starting it
-/// FFI: js_container_create(spec_json: *const StringHeader) -> *mut Promise
+/// Build a container image
+/// FFI: js_container_build(spec_val: f64, image_name: *const StringHeader) -> *mut Promise
 #[no_mangle]
-pub unsafe extern "C" fn js_container_create(spec_ptr: *const StringHeader) -> *mut Promise {
+pub unsafe extern "C" fn js_container_build(
+    spec_val: f64,
+    image_name_ptr: *const StringHeader,
+) -> *mut Promise {
     let promise = js_promise_new();
 
-    let spec = match types::parse_container_spec(spec_ptr) {
+    let spec_json_ptr = perry_runtime::json::js_json_stringify(spec_val, 0);
+    let spec_json = string_from_header(spec_json_ptr).unwrap_or_default();
+    let image_name = string_from_header(image_name_ptr).unwrap_or_default();
+
+    crate::common::spawn_for_promise(promise as *mut u8, async move {
+        let build_config: perry_container_compose::types::ComposeServiceBuild =
+            serde_json::from_str(&spec_json).map_err(|e| format!("Failed to parse build spec: {}", e))?;
+
+        let backend = match get_global_backend().await {
+            Ok(b) => Arc::clone(b),
+            Err(e) => return Err::<u64, String>(e.to_string()),
+        };
+
+        match backend.build(&build_config, &image_name).await {
+            Ok(()) => Ok(0u64),
+            Err(e) => Err::<u64, String>(e.to_string()),
+        }
+    });
+
+    promise
+}
+
+/// Create a container from the given spec without starting it
+/// FFI: js_container_create(spec_val: f64) -> *mut Promise
+#[no_mangle]
+pub unsafe extern "C" fn js_container_create(spec_val: f64) -> *mut Promise {
+    let promise = js_promise_new();
+
+    let val = JSValue::from_bits(spec_val.to_bits());
+    let spec = if val.is_string() {
+        let json = string_from_header(val.as_string_ptr()).unwrap_or_default();
+        serde_json::from_str(&json).map_err(|e| e.to_string())
+    } else {
+        let spec_json_ptr = perry_runtime::json::js_json_stringify(spec_val, 0);
+        if spec_json_ptr.is_null() {
+            Err("Failed to stringify container spec".to_string())
+        } else {
+            types::parse_container_spec(spec_json_ptr)
+        }
+    };
+
+    let spec = match spec {
         Ok(s) => s,
         Err(e) => {
             crate::common::spawn_for_promise(promise as *mut u8, async move {
@@ -167,9 +224,9 @@ pub unsafe extern "C" fn js_container_start(id_ptr: *const StringHeader) -> *mut
 }
 
 /// Stop a running container
-/// FFI: js_container_stop(id: *const StringHeader, timeout: i32) -> *mut Promise
+/// FFI: js_container_stop(id: *const StringHeader, timeout: f64) -> *mut Promise
 #[no_mangle]
-pub unsafe extern "C" fn js_container_stop(id_ptr: *const StringHeader, timeout: i32) -> *mut Promise {
+pub unsafe extern "C" fn js_container_stop(id_ptr: *const StringHeader, timeout: f64) -> *mut Promise {
     let promise = js_promise_new();
 
     let id = match string_from_header(id_ptr) {
@@ -183,7 +240,7 @@ pub unsafe extern "C" fn js_container_stop(id_ptr: *const StringHeader, timeout:
     };
 
     crate::common::spawn_for_promise(promise as *mut u8, async move {
-        let timeout_opt = if timeout >= 0 { Some(timeout as u32) } else { None };
+        let timeout_opt = if timeout >= 0.0 { Some(timeout as u32) } else { None };
         let backend = match get_global_backend().await {
             Ok(b) => Arc::clone(b),
             Err(e) => return Err::<u64, String>(e.to_string()),
@@ -198,9 +255,9 @@ pub unsafe extern "C" fn js_container_stop(id_ptr: *const StringHeader, timeout:
 }
 
 /// Remove a container
-/// FFI: js_container_remove(id: *const StringHeader, force: i32) -> *mut Promise
+/// FFI: js_container_remove(id: *const StringHeader, force: f64) -> *mut Promise
 #[no_mangle]
-pub unsafe extern "C" fn js_container_remove(id_ptr: *const StringHeader, force: i32) -> *mut Promise {
+pub unsafe extern "C" fn js_container_remove(id_ptr: *const StringHeader, force: f64) -> *mut Promise {
     let promise = js_promise_new();
 
     let id = match string_from_header(id_ptr) {
@@ -218,7 +275,7 @@ pub unsafe extern "C" fn js_container_remove(id_ptr: *const StringHeader, force:
             Ok(b) => Arc::clone(b),
             Err(e) => return Err::<u64, String>(e.to_string()),
         };
-        match backend.remove(&id, force != 0).await {
+        match backend.remove(&id, force != 0.0).await {
             Ok(()) => Ok(0u64),
             Err(e) => Err::<u64, String>(e.to_string()),
         }
@@ -228,9 +285,9 @@ pub unsafe extern "C" fn js_container_remove(id_ptr: *const StringHeader, force:
 }
 
 /// List containers
-/// FFI: js_container_list(all: i32) -> *mut Promise
+/// FFI: js_container_list(all: f64) -> *mut Promise
 #[no_mangle]
-pub unsafe extern "C" fn js_container_list(all: i32) -> *mut Promise {
+pub unsafe extern "C" fn js_container_list(all: f64) -> *mut Promise {
     let promise = js_promise_new();
 
     crate::common::spawn_for_promise(promise as *mut u8, async move {
@@ -238,7 +295,7 @@ pub unsafe extern "C" fn js_container_list(all: i32) -> *mut Promise {
             Ok(b) => Arc::clone(b),
             Err(e) => return Err::<u64, String>(e.to_string()),
         };
-        match backend.list(all != 0).await {
+        match backend.list(all != 0.0).await {
             Ok(containers) => {
                 let handle_id = types::register_container_info_list(containers);
                 Ok(handle_id as u64)
@@ -331,9 +388,9 @@ pub unsafe extern "C" fn js_container_detectBackend() -> *mut Promise {
 // ============ Container Logs and Exec ============
 
 /// Get logs from a container
-/// FFI: js_container_logs(id: *const StringHeader, tail: i32) -> *mut Promise
+/// FFI: js_container_logs(id: *const StringHeader, tail: f64) -> *mut Promise
 #[no_mangle]
-pub unsafe extern "C" fn js_container_logs(id_ptr: *const StringHeader, tail: i32) -> *mut Promise {
+pub unsafe extern "C" fn js_container_logs(id_ptr: *const StringHeader, tail: f64) -> *mut Promise {
     let promise = js_promise_new();
 
     let id = match string_from_header(id_ptr) {
@@ -346,7 +403,7 @@ pub unsafe extern "C" fn js_container_logs(id_ptr: *const StringHeader, tail: i3
         }
     };
 
-    let tail_opt = if tail >= 0 { Some(tail as u32) } else { None };
+    let tail_opt = if tail >= 0.0 { Some(tail as u32) } else { None };
 
     crate::common::spawn_for_promise(promise as *mut u8, async move {
         let backend = match get_global_backend().await {
@@ -366,12 +423,12 @@ pub unsafe extern "C" fn js_container_logs(id_ptr: *const StringHeader, tail: i3
 }
 
 /// Execute a command in a container
-/// FFI: js_container_exec(id: *const StringHeader, cmd_json: *const StringHeader, env_json: *const StringHeader, workdir: *const StringHeader) -> *mut Promise
+/// FFI: js_container_exec(id: *const StringHeader, cmd_val: f64, env_val: f64, workdir: *const StringHeader) -> *mut Promise
 #[no_mangle]
 pub unsafe extern "C" fn js_container_exec(
     id_ptr: *const StringHeader,
-    cmd_json_ptr: *const StringHeader,
-    env_json_ptr: *const StringHeader,
+    cmd_val: f64,
+    env_val: f64,
     workdir_ptr: *const StringHeader,
 ) -> *mut Promise {
     let promise = js_promise_new();
@@ -385,6 +442,9 @@ pub unsafe extern "C" fn js_container_exec(
             return promise;
         }
     };
+
+    let cmd_json_ptr = perry_runtime::json::js_json_stringify(cmd_val, 0);
+    let env_json_ptr = perry_runtime::json::js_json_stringify(env_val, 0);
 
     let cmd_json = string_from_header(cmd_json_ptr);
     let env_json = string_from_header(env_json_ptr);
@@ -470,9 +530,9 @@ pub unsafe extern "C" fn js_container_listImages() -> *mut Promise {
 }
 
 /// Remove an image
-/// FFI: js_container_removeImage(reference: *const StringHeader, force: i32) -> *mut Promise
+/// FFI: js_container_removeImage(reference: *const StringHeader, force: f64) -> *mut Promise
 #[no_mangle]
-pub unsafe extern "C" fn js_container_removeImage(reference_ptr: *const StringHeader, force: i32) -> *mut Promise {
+pub unsafe extern "C" fn js_container_removeImage(reference_ptr: *const StringHeader, force: f64) -> *mut Promise {
     let promise = js_promise_new();
 
     let reference = match string_from_header(reference_ptr) {
@@ -490,7 +550,7 @@ pub unsafe extern "C" fn js_container_removeImage(reference_ptr: *const StringHe
             Ok(b) => Arc::clone(b),
             Err(e) => return Err::<u64, String>(e.to_string()),
         };
-        match backend.remove_image(&reference, force != 0).await {
+        match backend.remove_image(&reference, force != 0.0).await {
             Ok(()) => Ok(0u64),
             Err(e) => Err::<u64, String>(e.to_string()),
         }
@@ -733,11 +793,12 @@ pub unsafe extern "C" fn js_compose_exec(
 // ============ Workload Graph Functions ============
 
 /// Construct and serialize a WorkloadGraph
-/// FFI: js_workload_graph(name: *const StringHeader, spec_json: *const StringHeader) -> *const StringHeader
+/// FFI: js_workload_graph(name: *const StringHeader, spec_val: f64) -> *const StringHeader
 #[no_mangle]
-pub unsafe extern "C" fn js_workload_graph(name_ptr: *const StringHeader, spec_ptr: *const StringHeader) -> *const StringHeader {
+pub unsafe extern "C" fn js_workload_graph(name_ptr: *const StringHeader, spec_val: f64) -> *const StringHeader {
     let name = string_from_header(name_ptr).unwrap_or_default();
-    let spec_json = string_from_header(spec_ptr).unwrap_or_default();
+    let spec_json_ptr = perry_runtime::json::js_json_stringify(spec_val, 0);
+    let spec_json = string_from_header(spec_json_ptr).unwrap_or_default();
     let nodes: perry_container_compose::indexmap::IndexMap<String, workload::WorkloadNode> = serde_json::from_str(&spec_json).unwrap_or_default();
 
     let graph = workload::WorkloadGraph { name, nodes };
@@ -746,12 +807,15 @@ pub unsafe extern "C" fn js_workload_graph(name_ptr: *const StringHeader, spec_p
 }
 
 /// Execute a workload graph
-/// FFI: js_workload_runGraph(graph_json: *const StringHeader, opts_json: *const StringHeader) -> *mut Promise
+/// FFI: js_workload_runGraph(graph_val: f64, opts_val: f64) -> *mut Promise
 #[no_mangle]
-pub unsafe extern "C" fn js_workload_runGraph(graph_ptr: *const StringHeader, opts_ptr: *const StringHeader) -> *mut Promise {
+pub unsafe extern "C" fn js_workload_runGraph(graph_val: f64, opts_val: f64) -> *mut Promise {
     let promise = js_promise_new();
-    let graph_json = string_from_header(graph_ptr).unwrap_or_default();
-    let opts_json = string_from_header(opts_ptr).unwrap_or_default();
+    let graph_json_ptr = perry_runtime::json::js_json_stringify(graph_val, 0);
+    let opts_json_ptr = perry_runtime::json::js_json_stringify(opts_val, 0);
+
+    let graph_json = string_from_header(graph_json_ptr).unwrap_or_default();
+    let opts_json = string_from_header(opts_json_ptr).unwrap_or_default();
 
     crate::common::spawn_for_promise(promise as *mut u8, async move {
         let graph: workload::WorkloadGraph = serde_json::from_str(&graph_json)
