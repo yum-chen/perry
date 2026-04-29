@@ -18,9 +18,12 @@ pub fn service_container_name(
         return name.clone();
     }
 
-    let image = service.image.as_deref().unwrap_or("unknown");
+    // Use MD5 of the serialized service spec to ensure the name is
+    // sensitive to spec changes (env vars, ports, etc.), maintaining
+    // idempotency invariants during `up()`.
+    let spec_json = serde_json::to_string(service).unwrap_or_default();
     let mut hasher = Md5::new();
-    hasher.update(image.as_bytes());
+    hasher.update(spec_json.as_bytes());
     let hash = hex::encode(hasher.finalize());
     let short_hash = &hash[..8];
 
@@ -82,5 +85,39 @@ mod tests {
         };
         let name = service_container_name(&svc, "ignored");
         assert_eq!(name, "my-custom-name");
+    }
+
+    #[test]
+    fn test_service_container_name_sensitive_to_spec_changes() {
+        use crate::types::ListOrDict;
+        use indexmap::IndexMap;
+
+        let mut svc1 = ComposeService {
+            image: Some("alpine".to_string()),
+            ..Default::default()
+        };
+        let mut env1 = IndexMap::new();
+        env1.insert("VAR".to_string(), Some(serde_yaml::Value::String("val1".to_string())));
+        svc1.environment = Some(ListOrDict::Dict(env1));
+
+        let mut svc2 = svc1.clone();
+        let mut env2 = IndexMap::new();
+        env2.insert("VAR".to_string(), Some(serde_yaml::Value::String("val2".to_string())));
+        svc2.environment = Some(ListOrDict::Dict(env2));
+
+        let n1 = service_container_name(&svc1, "svc");
+        let n2 = service_container_name(&svc2, "svc");
+
+        let hash1 = n1.split('-').next().unwrap();
+        let hash2 = n2.split('-').next().unwrap();
+
+        assert_ne!(hash1, hash2, "Hash should change when environment variables change");
+
+        // Test port change
+        let mut svc3 = svc1.clone();
+        svc3.ports = Some(vec![crate::types::PortSpec::Short(serde_yaml::Value::String("80:80".to_string()))]);
+        let n3 = service_container_name(&svc3, "svc");
+        let hash3 = n3.split('-').next().unwrap();
+        assert_ne!(hash1, hash3, "Hash should change when ports change");
     }
 }

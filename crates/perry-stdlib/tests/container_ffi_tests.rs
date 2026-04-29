@@ -66,13 +66,25 @@ async fn test_js_container_run_null() {
     }
 }
 
+#[tokio::test]
+async fn test_js_container_compose_logs_with_options() {
+    unsafe {
+        let opts = make_string_header("{\"service\":\"web\",\"tail\":10}");
+        let p = perry_stdlib::container::js_container_compose_logs(0.0, opts.as_ptr() as *const StringHeader);
+        let res = await_promise_sync(p);
+        // Expect error because handle 0.0 is invalid, but we want to make sure it didn't panic during parsing
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), "Promise rejected");
+    }
+}
+
 // ========== js_container_list ==========
 
 // Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
 #[tokio::test]
 async fn test_js_container_list_contract() {
     unsafe {
-        let p = perry_stdlib::container::js_container_list(1);
+        let p = perry_stdlib::container::js_container_list(1.0);
         let _ = await_promise_sync(p);
     }
 }
@@ -122,13 +134,23 @@ async fn test_js_container_compose_ps_contract() {
     }
 }
 
+#[tokio::test]
+async fn test_js_container_compose_exec_with_options() {
+    unsafe {
+        let opts = make_string_header("{\"service\":\"web\",\"cmd\":[\"ls\",\"-l\"]}");
+        let p = perry_stdlib::container::js_container_compose_exec(0.0, opts.as_ptr() as *const StringHeader);
+        let res = await_promise_sync(p);
+        assert!(res.is_err());
+    }
+}
+
 // ========== js_container_compose_logs ==========
 
 // Feature: perry-container | Layer: ffi-contract | Req: 11.7 | Property: -
 #[tokio::test]
 async fn test_js_container_compose_logs_null() {
     unsafe {
-        let p = perry_stdlib::container::js_container_compose_logs(0.0, null(), 10.0);
+        let p = perry_stdlib::container::js_container_compose_logs(0.0, null());
         let res = await_promise_sync(p);
         assert!(res.is_err());
     }
@@ -140,7 +162,7 @@ async fn test_js_container_compose_logs_null() {
 #[tokio::test]
 async fn test_js_container_compose_exec_null() {
     unsafe {
-        let p = perry_stdlib::container::js_container_compose_exec(0.0, null(), null());
+        let p = perry_stdlib::container::js_container_compose_exec(0.0, null());
         let res = await_promise_sync(p);
         assert!(res.is_err());
     }
@@ -187,7 +209,7 @@ async fn test_js_container_start_null() {
 #[tokio::test]
 async fn test_js_container_stop_null() {
     unsafe {
-        let p = perry_stdlib::container::js_container_stop(null(), 10);
+        let p = perry_stdlib::container::js_container_stop(null(), 10.0);
         let res = await_promise_sync(p);
         assert!(res.is_err());
     }
@@ -199,7 +221,7 @@ async fn test_js_container_stop_null() {
 #[tokio::test]
 async fn test_js_container_remove_null() {
     unsafe {
-        let p = perry_stdlib::container::js_container_remove(null(), 1);
+        let p = perry_stdlib::container::js_container_remove(null(), 1.0);
         let res = await_promise_sync(p);
         assert!(res.is_err());
     }
@@ -223,7 +245,7 @@ async fn test_js_container_inspect_null() {
 #[tokio::test]
 async fn test_js_container_logs_null() {
     unsafe {
-        let p = perry_stdlib::container::js_container_logs(null(), 10);
+        let p = perry_stdlib::container::js_container_logs(null(), 10.0);
         let res = await_promise_sync(p);
         assert!(res.is_err());
     }
@@ -259,7 +281,7 @@ async fn test_js_container_pull_image_null() {
 #[tokio::test]
 async fn test_js_container_remove_image_null() {
     unsafe {
-        let p = perry_stdlib::container::js_container_removeImage(null(), 0);
+        let p = perry_stdlib::container::js_container_removeImage(null(), 0.0);
         let res = await_promise_sync(p);
         assert!(res.is_err());
     }

@@ -1671,7 +1671,7 @@ async fn probe_candidate(name: &str) -> std::result::Result<Box<dyn ContainerBac
         }
         "podman" => {
             let bin = which_bin("podman")?;
-            if cfg!(target_os = "macos") {
+            if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
                 let out = Command::new(&bin)
                     .args(&["machine", "list", "--format", "json"])
                     .output()
