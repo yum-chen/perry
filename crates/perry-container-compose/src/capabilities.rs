@@ -431,6 +431,249 @@ pub fn unsupported_feature_names(caps: &BackendCapabilities) -> BTreeSet<&'stati
     s
 }
 
+/// Lookup the canonical `BackendCapabilities` constant for a backend name.
+///
+/// Names match the values returned by `platform_candidates()`. Unknown
+/// names fall back to `DOCKER` (the "everything supported" baseline) so
+/// any future-named OCI runtime gets reasonable defaults until its
+/// capability table is wired in explicitly.
+pub fn capabilities_for_backend(name: &str) -> &'static BackendCapabilities {
+    match name {
+        "apple/container" => &BackendCapabilities::APPLE,
+        "lima" => &BackendCapabilities::LIMA,
+        "podman" => &BackendCapabilities::PODMAN,
+        // orbstack, colima, rancher-desktop, nerdctl, docker — all
+        // Docker-protocol-compatible (orbstack + colima + rancher-desktop
+        // shell out via the docker CLI; nerdctl is API-compatible). They
+        // share the Docker capability profile.
+        _ => &BackendCapabilities::DOCKER,
+    }
+}
+
+/// Map `ComposeSpec` field usage to capability axes the backend must
+/// support. Returns the minimal set of feature names a backend needs to
+/// declare as `Native` (or `Emulated` / `Partial` if the caller's
+/// `SelectMode` admits them) to honor this spec.
+///
+/// Walking each axis once with a matching field check is intentional —
+/// the function is the explicit "what does the user's spec actually
+/// use?" enumeration. Adding a new capability axis means: add the
+/// constant in `BackendCapabilities`, then add the matching detection
+/// here. The conformance test pin makes the gap loud.
+pub fn required_features(spec: &crate::types::ComposeSpec) -> std::collections::BTreeSet<&'static str> {
+    use std::collections::BTreeSet;
+    let mut needed: BTreeSet<&'static str> = BTreeSet::new();
+
+    for (_svc_name, svc) in &spec.services {
+        // privileged: true → privileged
+        if svc.privileged.unwrap_or(false) {
+            needed.insert("privileged");
+        }
+
+        // security_opt seccomp=<path> → seccomp_profile
+        // security_opt no-new-privileges → no_new_privileges
+        if let Some(opts) = &svc.security_opt {
+            for opt in opts {
+                if opt.starts_with("seccomp=") || opt.starts_with("seccomp:") {
+                    needed.insert("seccomp_profile");
+                }
+                if opt == "no-new-privileges:true"
+                    || opt == "no-new-privileges=true"
+                    || opt == "no-new-privileges"
+                {
+                    needed.insert("no_new_privileges");
+                }
+            }
+        }
+
+        // cap_add / cap_drop → linux_capabilities
+        if svc.cap_add.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+            || svc.cap_drop.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+        {
+            needed.insert("linux_capabilities");
+        }
+
+        // read_only: true → read_only_rootfs
+        if svc.read_only.unwrap_or(false) {
+            needed.insert("read_only_rootfs");
+        }
+
+        // user → run_as_user
+        if svc.user.is_some() {
+            needed.insert("run_as_user");
+        }
+
+        // restart != "no" → restart_policy
+        if let Some(restart) = &svc.restart {
+            if restart != "no" {
+                needed.insert("restart_policy");
+            }
+        }
+
+        // healthcheck block → healthcheck_native
+        if svc.healthcheck.is_some() {
+            needed.insert("healthcheck_native");
+        }
+
+        // network_mode "host" / "container:..." → ipc/pid namespace sharing
+        // (these flow through to docker --ipc / --pid in real specs;
+        // network_mode itself is in the namespace-share family)
+        // pid: "host" / "container:..." → pid_namespace_share
+        if let Some(pid) = &svc.pid {
+            if !pid.is_empty() && pid != "private" {
+                needed.insert("pid_namespace_share");
+            }
+        }
+        // ipc: handled via security_opt in some specs; covered above
+
+        // tmpfs → tmpfs_mounts
+        if svc.tmpfs.is_some() {
+            needed.insert("tmpfs_mounts");
+        }
+
+        // volumes with :Z or :z suffix → selinux_mount_labels
+        if let Some(volumes) = &svc.volumes {
+            for v in volumes {
+                if let Some(s) = v.as_str() {
+                    if s.ends_with(":Z") || s.ends_with(":z") {
+                        needed.insert("selinux_mount_labels");
+                    }
+                }
+            }
+        }
+    }
+
+    // Networks: internal: true → internal_network. The compose spec
+    // allows `networks: { mynet: }` (declare with defaults) which
+    // parses to `Some(name) -> None`; only check the populated case.
+    if let Some(networks) = &spec.networks {
+        for (_name, net_opt) in networks {
+            if let Some(net) = net_opt {
+                if net.internal.unwrap_or(false) {
+                    needed.insert("internal_network");
+                }
+            }
+        }
+    }
+
+    // Implicit features always needed (universal but worth declaring):
+    //   network_alias — engine emits it for service-key DNS
+    //   bind_mounts + named_volumes — common path
+    //   rm_on_exit — when any service has `rm: true`
+    // These are universal across all real backends so they don't
+    // narrow selection; we omit them from `needed` to avoid noise.
+
+    needed
+}
+
+/// How strict capability-match should be when choosing a backend.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub enum SelectMode {
+    /// Only `Native` support counts. Any required feature with
+    /// `Emulated`, `Partial`, or `Unsupported` disqualifies a backend.
+    /// Use this for production deploys that demand bit-for-bit parity
+    /// across runtimes (no host-side emulation surprises).
+    StrictNative,
+    /// `Native` + `Emulated` count; `Partial` + `Unsupported` don't.
+    /// Engine-emulated features (apple's restart-loop, healthcheck
+    /// polling, sigstore verification) are accepted as a degraded but
+    /// functional substitute.
+    #[default]
+    AcceptEmulated,
+    /// `Native` + `Emulated` + `Partial` count; only `Unsupported`
+    /// disqualifies. Use this for development / "just make it run"
+    /// flows where the partial-support reasons (e.g. apple's
+    /// user-defined-bridge needs `container system start`) are
+    /// acceptable.
+    AcceptPartial,
+}
+
+/// Pick the highest-priority backend whose `BackendCapabilities` can
+/// honor every feature the spec uses, given the strictness mode.
+///
+/// Walks `platform_candidates()` in priority order, looks up each
+/// backend's capability table, returns the first one that satisfies
+/// the spec's feature set. Returns `None` if no backend can honor the
+/// spec under the given mode (Strict-mode equivalent — the caller
+/// chooses whether that's an error or a fall-through to default).
+///
+/// The returned name can be passed to `js_container_setBackend()` or
+/// `PERRY_CONTAINER_BACKEND=<name>` to pin the chosen runtime.
+///
+/// **Determinism:** the function is pure — same `(spec, mode)` always
+/// returns the same backend name. No filesystem / network probes happen
+/// here; the caller still has to verify the chosen backend is actually
+/// installed via `setBackend()` (which probes) or `detect_backend()`.
+pub fn select_backend_for(
+    spec: &crate::types::ComposeSpec,
+    mode: SelectMode,
+) -> Option<&'static str> {
+    let needed = required_features(spec);
+
+    // The empty case: a trivial spec with nothing fancy → return the
+    // first platform candidate (apple-first on macOS).
+    if needed.is_empty() {
+        return crate::backend::platform_candidates().first().copied();
+    }
+
+    for &candidate in crate::backend::platform_candidates() {
+        let caps = capabilities_for_backend(candidate);
+        if needed
+            .iter()
+            .all(|feat| feature_satisfies(caps, feat, mode))
+        {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Helper: given a feature axis name, look up its `FeatureSupport` on
+/// the backend's capability table and decide whether the chosen
+/// `SelectMode` accepts it.
+fn feature_satisfies(
+    caps: &BackendCapabilities,
+    feature: &str,
+    mode: SelectMode,
+) -> bool {
+    let support = match feature {
+        "privileged" => caps.privileged,
+        "seccomp_profile" => caps.seccomp_profile,
+        "no_new_privileges" => caps.no_new_privileges,
+        "linux_capabilities" => caps.linux_capabilities,
+        "read_only_rootfs" => caps.read_only_rootfs,
+        "run_as_user" => caps.run_as_user,
+        "network_alias" => caps.network_alias,
+        "user_defined_bridge" => caps.user_defined_bridge,
+        "internal_network" => caps.internal_network,
+        "ipc_namespace_share" => caps.ipc_namespace_share,
+        "pid_namespace_share" => caps.pid_namespace_share,
+        "restart_policy" => caps.restart_policy,
+        "healthcheck_native" => caps.healthcheck_native,
+        "rm_on_exit" => caps.rm_on_exit,
+        "named_volumes" => caps.named_volumes,
+        "bind_mounts" => caps.bind_mounts,
+        "selinux_mount_labels" => caps.selinux_mount_labels,
+        "tmpfs_mounts" => caps.tmpfs_mounts,
+        "image_signature_verify" => caps.image_signature_verify,
+        "multi_arch_pull" => caps.multi_arch_pull,
+        // Unknown feature name — defensive: assume the backend can
+        // handle it (don't block selection on a typo).
+        _ => return true,
+    };
+
+    match (support, mode) {
+        // Native always satisfies, regardless of mode.
+        (FeatureSupport::Native, _) => true,
+        // Emulated counts in AcceptEmulated + AcceptPartial.
+        (FeatureSupport::Emulated, SelectMode::AcceptEmulated) => true,
+        (FeatureSupport::Emulated, SelectMode::AcceptPartial) => true,
+        // Partial only counts in AcceptPartial.
+        (FeatureSupport::Partial(_), SelectMode::AcceptPartial) => true,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -474,3 +474,99 @@ export interface BackendInfo {
  *   ```
  */
 export function detectBackend(): Promise<string>;
+
+/**
+ * Pin a specific container backend programmatically. Equivalent to
+ * setting `PERRY_CONTAINER_BACKEND=<name>` before process start, but
+ * callable from TS. **Must be called before any other container op**
+ * — the global backend singleton is initialised lazily on first use,
+ * and `setBackend()` rejects after that point (the `OnceLock`-based
+ * cache can't be reset, so a mid-process switch would silently fail).
+ *
+ * Valid names come from `getBackendPriority()`. Common values:
+ * `"apple/container"`, `"podman"`, `"docker"`, `"orbstack"`,
+ * `"colima"`, `"rancher-desktop"`, `"lima"`, `"nerdctl"`.
+ *
+ * @returns Promise resolving to the canonical backend name on success;
+ *   rejects with one of:
+ *   - `"backend already initialised; setBackend must be called before any other container op"`
+ *   - `"unknown backend: '<name>'. Valid: [...]"`
+ *   - `"backend probe failed: <reason>"`
+ *
+ * @example
+ *   import { setBackend, up } from 'perry/container';
+ *   // Pin docker explicitly, override platform default (apple/container on macOS).
+ *   await setBackend('docker');
+ *   await up({ services: { web: { image: 'nginx' } } });
+ */
+export function setBackend(name: string): Promise<string>;
+
+/**
+ * Returns the platform-specific backend probe order as a JSON-encoded
+ * `string[]`. Useful for diagnostics + validating an argument to
+ * `setBackend()`.
+ *
+ * The ordering encodes three priorities in descending precedence:
+ *
+ * 1. **Platform-native first** — `apple/container` is the very first
+ *    probe on macOS/iOS.
+ * 2. **OCI-compatible / rootless before daemon-based** — `podman`
+ *    (rootless, daemonless, OCI-compatible) ranks ahead of `docker`
+ *    on every platform; `nerdctl` (containerd-native) sits between.
+ * 3. **Docker is always the fallback** — never preferred, never first.
+ *
+ * Override per-process via `PERRY_CONTAINER_BACKEND=<name>` env var
+ * (or the `setBackend()` runtime API above).
+ *
+ * @returns JSON-encoded `string[]` of backend names in probe order.
+ *   Example on macOS:
+ *   `'["apple/container","orbstack","colima","rancher-desktop","lima","podman","nerdctl","docker"]'`
+ */
+export function getBackendPriority(): string;
+
+/**
+ * Strictness modes for `selectBackendFor()`.
+ *
+ * - `"strict-native"` — only natively-supported features count. A
+ *   spec needing `privileged: true` rules out apple/container even
+ *   though apple emulates restart policies host-side.
+ * - `"accept-emulated"` (default) — engine-emulated features count
+ *   as a degraded but functional substitute. Apple's host-side
+ *   restart loop, healthcheck polling, sigstore verification all
+ *   accepted.
+ * - `"accept-partial"` — also accept `Partial(reason)` support
+ *   axes (e.g., apple's user-defined-bridge requires
+ *   `container system start`). Suitable for dev / "just make it
+ *   run" workflows.
+ */
+export type SelectMode = "strict-native" | "accept-emulated" | "accept-partial";
+
+/**
+ * Pick the highest-priority backend whose declared capabilities can
+ * honor every feature the spec uses. Pure introspection — no probes,
+ * no daemon checks, no filesystem access.
+ *
+ * Returns the JSON-encoded backend name (e.g. `'"apple/container"'`,
+ * `'"docker"'`, `'"podman"'`) or the JSON sentinel `"null"` if no
+ * backend can honor the spec under the given strictness mode.
+ *
+ * @example
+ *   import { selectBackendFor, setBackend, up } from 'perry/container';
+ *
+ *   const spec = {
+ *     services: {
+ *       db: { image: 'postgres:16', privileged: true },
+ *     },
+ *   };
+ *
+ *   // privileged: true rules out apple/container — picks docker.
+ *   const best = JSON.parse(selectBackendFor(JSON.stringify(spec)));
+ *   // => "docker"
+ *   await setBackend(best);
+ *   await up(spec);
+ *
+ * @param spec  JSON-encoded ComposeSpec
+ * @param mode  Strictness — defaults to `"accept-emulated"`
+ * @returns     JSON-encoded backend name or `"null"`
+ */
+export function selectBackendFor(spec: string, mode?: SelectMode): string;

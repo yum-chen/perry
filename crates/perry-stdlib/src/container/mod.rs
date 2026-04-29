@@ -843,6 +843,147 @@ pub unsafe extern "C" fn js_container_detectBackend() -> *mut Promise {
     promise
 }
 
+/// FFI: `js_container_selectBackendFor(spec_json, mode) -> *const StringHeader`
+///
+/// Pick the highest-priority backend whose `BackendCapabilities` can
+/// honor every feature the spec uses. Pure introspection — no probes,
+/// no network calls, no filesystem access. Returns the canonical
+/// backend name (e.g. `"apple/container"`, `"docker"`, `"podman"`) or
+/// the JSON sentinel `"null"` if no backend can honor the spec under
+/// the given strictness mode.
+///
+/// **Mode semantics** (string arg, falls back to `AcceptEmulated`):
+/// - `"strict-native"` — only `Native` features count
+/// - `"accept-emulated"` (default) — `Native` + `Emulated` count
+/// - `"accept-partial"` — `Native` + `Emulated` + `Partial` count
+///
+/// **Workflow:**
+/// ```typescript
+/// const best = selectBackendFor(JSON.stringify(spec), 'accept-emulated');
+/// if (best === 'null') throw new Error('no backend can honor this spec');
+/// const parsed = JSON.parse(best); // -> "docker" | "apple/container" | ...
+/// await setBackend(parsed);
+/// await up(spec);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn js_container_selectBackendFor(
+    spec_ptr: *const StringHeader,
+    mode_ptr: *const StringHeader,
+) -> *const StringHeader {
+    let spec_json = match string_from_header(spec_ptr) {
+        Some(s) => s,
+        None => return string_to_js("null"),
+    };
+    let mode_str = string_from_header(mode_ptr).unwrap_or_default();
+    let mode = match mode_str.as_str() {
+        "strict-native" => perry_container_compose::SelectMode::StrictNative,
+        "accept-partial" => perry_container_compose::SelectMode::AcceptPartial,
+        _ => perry_container_compose::SelectMode::AcceptEmulated,
+    };
+
+    let spec: perry_container_compose::ComposeSpec =
+        match serde_json::from_str(&spec_json) {
+            Ok(s) => s,
+            Err(_) => return string_to_js("null"),
+        };
+
+    match perry_container_compose::select_backend_for(&spec, mode) {
+        Some(name) => {
+            let json = serde_json::to_string(name).unwrap_or_else(|_| "null".to_string());
+            string_to_js(&json)
+        }
+        None => string_to_js("null"),
+    }
+}
+
+/// FFI: `js_container_getBackendPriority() -> *const StringHeader`
+///
+/// Returns the platform-specific backend probe order as a JSON-encoded
+/// string array (`["apple/container", "orbstack", ...]`). The list is
+/// canonical at compile time — see `platform_candidates()` in
+/// `perry-container-compose::backend` for the encoding rationale.
+///
+/// Useful for diagnostics ("which backends will Perry try, in what
+/// order?") and for programmatic backend selection (`setBackend()` only
+/// accepts names in this list).
+#[no_mangle]
+pub unsafe extern "C" fn js_container_getBackendPriority() -> *const StringHeader {
+    let candidates = perry_container_compose::platform_candidates();
+    let json = serde_json::to_string(candidates).unwrap_or_else(|_| "[]".to_string());
+    string_to_js(&json)
+}
+
+/// FFI: `js_container_setBackend(name: *const StringHeader) -> *mut Promise`
+///
+/// Programmatically pin a specific backend, equivalent to setting the
+/// `PERRY_CONTAINER_BACKEND` env var before process start but callable
+/// from TS. Must be called BEFORE any other `perry/container` or
+/// `perry/compose` operation that initialises the global backend
+/// singleton; once initialised, `BACKEND` is immutable (OnceLock can't
+/// be reset) and this function returns an error so the caller knows
+/// the override didn't take effect.
+///
+/// Promise resolves with the canonical backend name on success, or
+/// rejects with one of:
+/// - `"backend already initialised; setBackend must be called before any other container op"`
+/// - `"unknown backend: '<name>'. Valid: [...]"`
+/// - `"backend probe failed: <reason>"`
+#[no_mangle]
+pub unsafe extern "C" fn js_container_setBackend(
+    name_ptr: *const StringHeader,
+) -> *mut Promise {
+    let promise = js_promise_new();
+    let name = match string_from_header(name_ptr) {
+        Some(s) => s,
+        None => {
+            crate::common::spawn_for_promise(promise as *mut u8, async move {
+                Err::<u64, String>("Invalid backend name pointer".to_string())
+            });
+            return promise;
+        }
+    };
+
+    crate::common::spawn_for_promise_deferred(
+        promise as *mut u8,
+        async move {
+            // Reject if BACKEND already initialised — OnceLock can't be
+            // reset, so mid-process switching would just be deceptive
+            // (env var would update but cached singleton wouldn't).
+            if BACKEND.get().is_some() {
+                return Err(
+                    "backend already initialised; setBackend must be called \
+                     before any other container op".to_string(),
+                );
+            }
+
+            // Reject if name isn't in the canonical probe list. We use
+            // platform_candidates() rather than a hardcoded list so this
+            // stays in sync with `detect_backend()`'s actual probe paths.
+            let candidates = perry_container_compose::platform_candidates();
+            if !candidates.iter().any(|c| **c == name) {
+                return Err(format!(
+                    "unknown backend: '{}'. Valid: {:?}",
+                    name, candidates
+                ));
+            }
+
+            // Set the env var so detect_backend() honors it on next call,
+            // then trigger detection now to return success/failure to the
+            // caller synchronously.
+            std::env::set_var("PERRY_CONTAINER_BACKEND", &name);
+            match get_global_backend().await {
+                Ok(b) => Ok(b.backend_name().to_string()),
+                Err(e) => Err(format!("backend probe failed: {}", e)),
+            }
+        },
+        |s| {
+            let str_ptr = perry_runtime::js_string_from_bytes(s.as_ptr(), s.len() as u32);
+            perry_runtime::JSValue::string_ptr(str_ptr).bits()
+        },
+    );
+    promise
+}
+
 // ============ Container Logs and Exec ============
 
 /// Get logs from a container

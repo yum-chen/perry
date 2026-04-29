@@ -1587,7 +1587,22 @@ pub async fn detect_backend() -> Result<Box<dyn ContainerBackend>> {
     Err(ComposeError::NoBackendFound { probed: results })
 }
 
-fn platform_candidates() -> &'static [&'static str] {
+/// Backend probe order for the current platform.
+///
+/// Encodes three priorities, in descending precedence:
+///
+/// 1. **Platform-native runtimes win** — `apple/container` on macOS/iOS
+///    (the only Apple-native OCI runtime).
+/// 2. **Daemonless / OCI-compatible / rootless beat daemon-based** —
+///    `podman` (rootless, daemonless, OCI-compatible) ranks ahead of
+///    `docker` (root daemon) on every platform.
+/// 3. **Docker is always the fallback** — never preferred, never first;
+///    chosen only when nothing else is probeable.
+///
+/// Per-process override via `PERRY_CONTAINER_BACKEND=<name>` env var
+/// (precedence over this list — disables auto-detection entirely).
+/// Programmatic override via `js_container_setBackend(name)` (TS-side).
+pub fn platform_candidates() -> &'static [&'static str] {
     if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
         &[
             "apple/container",

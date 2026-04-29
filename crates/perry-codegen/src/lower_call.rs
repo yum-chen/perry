@@ -4659,6 +4659,20 @@ const NATIVE_MODULE_TABLE: &[NativeModSig] = &[
         class_filter: None, runtime: "js_container_getBackend", args: &[], ret: NR_STR },
     NativeModSig { module: "perry/container", has_receiver: false, method: "detectBackend",
         class_filter: None, runtime: "js_container_detectBackend", args: &[], ret: NR_PTR },
+    // Programmatic backend selection — equivalent to setting
+    // PERRY_CONTAINER_BACKEND=<name> before process start, but callable
+    // from TS. Must run BEFORE any other container op (the global
+    // backend OnceLock can't be reset once initialised).
+    NativeModSig { module: "perry/container", has_receiver: false, method: "setBackend",
+        class_filter: None, runtime: "js_container_setBackend", args: &[NA_STR], ret: NR_PTR },
+    NativeModSig { module: "perry/container", has_receiver: false, method: "getBackendPriority",
+        class_filter: None, runtime: "js_container_getBackendPriority", args: &[], ret: NR_STR },
+    // Capability-aware selection: introspect the spec, pick the
+    // highest-priority backend that can honor every feature it uses.
+    // Returns a JSON-encoded string (the backend name) or "null" if no
+    // backend can honor the spec under the given strictness mode.
+    NativeModSig { module: "perry/container", has_receiver: false, method: "selectBackendFor",
+        class_filter: None, runtime: "js_container_selectBackendFor", args: &[NA_STR, NA_STR], ret: NR_STR },
     NativeModSig { module: "perry/container", has_receiver: false, method: "composeUp",
         class_filter: None, runtime: "js_container_composeUp", args: &[NA_STR], ret: NR_PTR },
     // Cleanup helpers — let users tear down stacks WITHOUT holding
